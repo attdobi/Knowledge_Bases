@@ -124,5 +124,68 @@ def test_main_uses_saved_state_and_skips_writes_during_dry_run(tmp_path: Path, m
     assert not summary_path_exists(output_root)
 
 
+def test_main_since_id_overrides_saved_state(tmp_path: Path, monkeypatch) -> None:
+    output_root = tmp_path / "vault"
+    state_path = tmp_path / "state" / "ingest_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text('{"last_processed_id": 88}', encoding="utf-8")
+    seen = {}
+
+    def fake_fetch_summaries(conn, schema, since_id=None, limit=None):
+        seen["since_id"] = since_id
+        return []
+
+    monkeypatch.setattr(ingest, "connect", lambda dsn: DummyConnection())
+    monkeypatch.setattr(ingest, "discover_schema", lambda conn: make_schema())
+    monkeypatch.setattr(ingest, "fetch_summaries", fake_fetch_summaries)
+
+    result = ingest.main(
+        [
+            "--output-root",
+            str(output_root),
+            "--state-path",
+            str(state_path),
+            "--since-id",
+            "120",
+        ]
+    )
+
+    assert result == 0
+    assert seen == {"since_id": 120}
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"last_processed_id": 88}
+    assert not summary_path_exists(output_root)
+
+
+def test_main_reset_state_clears_saved_cursor_before_fetch(tmp_path: Path, monkeypatch) -> None:
+    output_root = tmp_path / "vault"
+    state_path = tmp_path / "state" / "ingest_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text('{"last_processed_id": 88}', encoding="utf-8")
+    seen = {}
+
+    def fake_fetch_summaries(conn, schema, since_id=None, limit=None):
+        seen["since_id"] = since_id
+        return []
+
+    monkeypatch.setattr(ingest, "connect", lambda dsn: DummyConnection())
+    monkeypatch.setattr(ingest, "discover_schema", lambda conn: make_schema())
+    monkeypatch.setattr(ingest, "fetch_summaries", fake_fetch_summaries)
+
+    result = ingest.main(
+        [
+            "--output-root",
+            str(output_root),
+            "--state-path",
+            str(state_path),
+            "--reset-state",
+        ]
+    )
+
+    assert result == 0
+    assert seen == {"since_id": None}
+    assert not state_path.exists()
+    assert not summary_path_exists(output_root)
+
+
 def summary_path_exists(output_root: Path) -> bool:
     return any(output_root.rglob("*_summary.md")) if output_root.exists() else False

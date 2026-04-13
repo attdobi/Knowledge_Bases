@@ -2,6 +2,10 @@
 
 `financial_news` is a small ingestion package that reads financial-news summary rows from Postgres and exports them into an Obsidian-friendly Markdown vault layout.
 
+For an operator-facing checklist and recovery guide, see [RUNBOOK.md](RUNBOOK.md).
+
+> Important: if you run the CLI without `--output-root`, it writes into this package directory itself. That is convenient for local demo/testing, but production operators should point `--output-root` at the real Obsidian vault so they do not modify the checked-in sample snapshot in this repo.
+
 It is designed for the workflow already in use on the Mac mini today:
 
 - read rows from the `summaries` table in the local `adobi` Postgres database
@@ -63,10 +67,9 @@ The package depends on:
 
 ## Create a venv and install locally
 
-From this directory:
+From `financial_news/`:
 
 ```bash
-cd /Users/sacsimoto/GitHub/Knowledge_Bases/financial_news
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -84,7 +87,6 @@ python -m financial_news --help
 ## Run tests
 
 ```bash
-cd /Users/sacsimoto/GitHub/Knowledge_Bases/financial_news
 pytest
 ```
 
@@ -93,7 +95,6 @@ pytest
 If Postgres is local and accessible with the default fallback connection logic, this is enough:
 
 ```bash
-cd /Users/sacsimoto/GitHub/Knowledge_Bases/financial_news
 financial-news-ingest
 ```
 
@@ -113,8 +114,10 @@ financial-news-ingest --dsn 'dbname=adobi host=127.0.0.1 port=5432'
 By default, output is written into this package directory itself, and state is written to:
 
 ```text
-/Users/sacsimoto/GitHub/Knowledge_Bases/financial_news/.state/ingest_state.json
+financial_news/.state/ingest_state.json
 ```
+
+For real operator runs, prefer passing `--output-root /path/to/your/obsidian/vault/financial_news` so live ingestion writes into the actual vault instead of the checked-in sample snapshot in this repository.
 
 ## Configuring a production Mac laptop later
 

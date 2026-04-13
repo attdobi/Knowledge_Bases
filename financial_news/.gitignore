@@ -1,7 +1,20 @@
+# Python bytecode / local environments
 __pycache__/
 *.py[cod]
 .venv/
+venv/
+
+# Runtime + test artifacts
 .state/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 build/
+dist/
 *.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# macOS / editor noise
+.DS_Store
