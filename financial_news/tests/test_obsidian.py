@@ -52,6 +52,7 @@ def test_render_summary_block_uses_obsidian_embed_syntax(tmp_path: Path) -> None
 
     assert "<!-- source-summary-id: 3 -->" in block
     assert "## 2026-03-30T14:05:00+00:00 — Agent BBC Business" in block
+    assert "**Tags:** #financial-news #daily-summary #source/agent-bbc-business" in block
     assert "### Headlines" in block
     assert "- European stocks close higher" in block
     assert "### Insights" in block
@@ -68,8 +69,9 @@ def test_append_summary_creates_header_once_and_appends_blocks(tmp_path: Path) -
 
     assert first_path == second_path
     content = first_path.read_text(encoding="utf-8")
-    assert content.startswith("# 2026-03-30 summary\n")
-    assert content.count("# 2026-03-30 summary") == 1
+    assert content.startswith("---\ndate: 2026-03-30\ntype: daily-summary\n")
+    assert "[[Home]] · [[Sources/Home|Sources]] · [[Themes/Home|Themes]]" in content
+    assert content.count("# Financial News — 2026-03-30") == 1
     assert "source-summary-id: 11" in content
     assert "source-summary-id: 12" in content
     assert content.count("![[attachments/2026-03-30/") == 2

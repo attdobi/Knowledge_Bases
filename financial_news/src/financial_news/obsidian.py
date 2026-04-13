@@ -5,10 +5,17 @@ import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 
 from financial_news.models import SummaryRecord
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _agent_slug(agent: str | None) -> str:
+    raw = (agent or "unknown-agent").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    return slug or "unknown-agent"
 
 
 def summary_date(record: SummaryRecord) -> datetime:
@@ -44,10 +51,12 @@ def copy_attachments(output_root: Path, record: SummaryRecord) -> list[Path]:
 def render_summary_block(output_root: Path, record: SummaryRecord, attachments: list[Path]) -> str:
     stamp = summary_date(record)
     timestamp_text = stamp.isoformat()
+    source_tag = _agent_slug(record.agent)
     lines = [
         "\n---\n",
         f"<!-- source-summary-id: {record.row_id} -->\n",
         f"## {timestamp_text} — {record.agent or 'unknown-agent'}\n\n",
+        f"**Tags:** #financial-news #daily-summary #source/{source_tag}\n\n",
         f"- Source row id: `{record.row_id}`\n",
     ]
     if record.agent:
@@ -81,8 +90,21 @@ def append_summary(output_root: Path, record: SummaryRecord) -> Path:
     block = render_summary_block(output_root, record, attachments)
 
     if not destination.exists():
-        title = destination.stem.replace("_summary", "").replace("_", " ")
-        destination.write_text(f"# {title} summary\n", encoding="utf-8")
+        stamp = summary_date(record)
+        title = stamp.strftime("%Y-%m-%d")
+        note_header = (
+            "---\n"
+            f"date: {title}\n"
+            "type: daily-summary\n"
+            "tags:\n"
+            "  - financial-news\n"
+            "  - daily-summary\n"
+            f"  - week/{stamp.strftime('%G-W%V')}\n"
+            "---\n\n"
+            "[[Home]] · [[Sources/Home|Sources]] · [[Themes/Home|Themes]] · [[Templates/Daily Summary Template|Template]]\n\n"
+            f"# Financial News — {title}\n"
+        )
+        destination.write_text(note_header, encoding="utf-8")
     with destination.open("a", encoding="utf-8") as handle:
         handle.write(block)
     return destination
