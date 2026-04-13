@@ -14,6 +14,20 @@ from financial_news.state import StateStore
 LOGGER = logging.getLogger(__name__)
 
 
+def parse_path_remaps(values: Sequence[str] | None) -> list[tuple[Path, Path]]:
+    remaps: list[tuple[Path, Path]] = []
+    for value in values or []:
+        if "=" not in value:
+            raise ValueError(f"Invalid --path-remap value {value!r}. Expected FROM=TO.")
+        from_text, to_text = value.split("=", 1)
+        from_text = from_text.strip()
+        to_text = to_text.strip()
+        if not from_text or not to_text:
+            raise ValueError(f"Invalid --path-remap value {value!r}. Expected FROM=TO.")
+        remaps.append((Path(from_text).expanduser(), Path(to_text).expanduser()))
+    return remaps
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ingest financial-news summaries from Postgres into Obsidian markdown files.")
     parser.add_argument("--dsn", help="Postgres DSN. Overrides FINANCIAL_NEWS_DSN/DATABASE_URL.")
@@ -21,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--since-id", type=int, help="Start from rows with id greater than this value.")
     parser.add_argument("--output-root", help="Override the Obsidian output root. Defaults to the package project root.")
     parser.add_argument("--state-path", help="Override the ingestion state file path.")
+    parser.add_argument(
+        "--path-remap",
+        action="append",
+        default=[],
+        metavar="FROM=TO",
+        help="Remap attachment paths before copying. Repeatable. Example: --path-remap '/Users/attila/d-ai-trader=/Volumes/adobi/d-ai-trader'",
+    )
     parser.add_argument("--reset-state", action="store_true", help="Delete the stored state before ingesting.")
     parser.add_argument("--dry-run", action="store_true", help="Parse and log rows without writing files or state.")
     parser.add_argument("--log-level", default="INFO", help="Python logging level (default: INFO).")
@@ -39,6 +60,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     configure_logging(args.log_level)
 
+    try:
+        path_remaps = parse_path_remaps(args.path_remap)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     config = AppConfig.load(dsn=args.dsn, output_root=args.output_root, state_path=args.state_path)
     state_store = StateStore(config.state_path)
 
@@ -49,6 +75,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     state = state_store.load()
     since_id = args.since_id if args.since_id is not None else state.get("last_processed_id")
     LOGGER.info("Starting ingestion with output_root=%s state_path=%s since_id=%s", config.output_root, config.state_path, since_id)
+    if path_remaps:
+        LOGGER.info("Attachment path remaps: %s", [{"from": str(source), "to": str(target)} for source, target in path_remaps])
 
     with connect(config.dsn) as conn:
         schema = discover_schema(conn)
@@ -84,7 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 len(record.attachments),
             )
         else:
-            written_paths.append(append_summary(config.output_root, record))
+            written_paths.append(append_summary(config.output_root, record, path_remaps=path_remaps))
             LOGGER.info("Appended row %s to %s", record.row_id, written_paths[-1])
         last_id = record.row_id
 

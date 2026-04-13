@@ -7,7 +7,10 @@ tags:
 
 # Financial News — {{date:YYYY-MM-DD}}
 
-[[Home]] · [[Sources/Home|Sources]] · [[Themes/Home|Themes]]
+> Generated daily imports should stay lean. Use this template only when manually curating a higher-signal note.
+
+## Topic MOCs to update
+-
 
 ## Market regime
 - 

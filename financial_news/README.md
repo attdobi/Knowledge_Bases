@@ -1,71 +1,99 @@
 # financial_news
 
-`financial_news` is a small ingestion package that reads financial-news summary rows from Postgres and exports them into an Obsidian-friendly Markdown vault layout.
+`financial_news` ingests financial-news summary rows from Postgres and exports them into an Obsidian-friendly vault.
 
-For an operator-facing checklist and recovery guide, see [RUNBOOK.md](RUNBOOK.md).
+This repo now tracks the **operator surface and curated vault structure** only:
 
-> Important: if you run the CLI without `--output-root`, it writes into this package directory itself. That is convenient for local demo/testing, but production operators should point `--output-root` at the real Obsidian vault so they do not modify the checked-in sample snapshot in this repo.
+- ingestion code
+- operator docs / runbook
+- tests
+- source profiles under `Sources/`
+- topic MOCs under `Topics/`
+- weekly-note seeds under `Themes/`
+- templates
 
-It is designed for the workflow already in use on the Mac mini today:
+It does **not** want checked-in imported screenshots or bulky generated day-note output.
 
-- read rows from the `summaries` table in the local `adobi` Postgres database
-- parse nested JSON/text payloads into normalized headlines, insights, timestamps, and attachments
-- append each summary into a day-based Markdown note under a month folder
-- copy referenced local image files into an `attachments/` folder and embed them with Obsidian `![[...]]` syntax
-- track the last processed row id in a state file so repeated runs are incremental
+For the step-by-step operator checklist, recovery notes, and cron example, see [RUNBOOK.md](RUNBOOK.md).
 
-## What the tool does
+## What is tracked vs local-only
 
-For each new summary row, the ingester will:
+### Tracked in git
 
-1. connect to Postgres
-2. discover the `summaries` table schema
-3. fetch rows in ascending `id` order
-4. parse summary content into a `SummaryRecord`
-5. append a new block into `YYYY-MM/YYYY-MM-DD_summary.md`
-6. optionally copy local attachments into `attachments/YYYY-MM-DD/`
-7. update `.state/ingest_state.json` with the last processed row id
+- Python package code under `src/`
+- tests under `tests/`
+- source profiles, topic MOCs, weekly notes, templates
+- operator documentation
 
-The output is intentionally **append-only**. Existing summary blocks are not rewritten or deduplicated after the fact; each ingested row is appended once, and incremental behavior is controlled by the saved `last_processed_id`.
+### Local-only / untracked
 
-## Repository / package layout
+- imported daily notes such as `2026-04/2026-04-13_summary.md`
+- copied screenshot attachments under `attachments/YYYY-MM-DD/`
+- runtime state under `.state/ingest_state.json`
+- local virtualenvs and caches
+
+The checked-in repo should behave like an **operator control plane**, not the storage location for the imported vault payload.
+
+## Vault structure
+
+The intended vault structure is:
 
 ```text
 financial_news/
 ├── README.md
-├── pyproject.toml
+├── RUNBOOK.md
+├── scripts/
+│   └── run_remote_import.sh
+├── Sources/
+│   ├── Home.md
+│   ├── CNBC.md
+│   └── ...
+├── Topics/
+│   ├── AI.md
+│   ├── Tech.md
+│   ├── Energy.md
+│   ├── Utilities.md
+│   ├── Trump.md
+│   ├── War and Geopolitics.md
+│   ├── Rates and Fed.md
+│   ├── Financials.md
+│   └── ...
+├── Themes/
+│   ├── Home.md
+│   └── 2026-W14.md
+├── Templates/
+│   ├── Daily Summary Template.md
+│   └── Weekly Theme Template.md
 ├── src/
-│   └── financial_news/
-│       ├── __init__.py
-│       ├── __main__.py
-│       ├── config.py      # config + default output/state paths
-│       ├── db.py          # Postgres connection, schema discovery, row fetch
-│       ├── ingest.py      # CLI entry point / orchestration
-│       ├── models.py      # SummaryRecord / TableSchema dataclasses
-│       ├── obsidian.py    # markdown rendering + attachment copying
-│       ├── parser.py      # payload normalization / extraction helpers
-│       └── state.py       # simple JSON-backed state store
 └── tests/
-    ├── conftest.py
-    ├── test_ingest.py
-    ├── test_obsidian.py
-    ├── test_parser.py
-    └── test_state.py
 ```
 
-## Prerequisites
+Generated import output should live in the **real vault output path** outside the repo checkout, typically on the mounted share.
 
-- Python 3.11+
-- Postgres access to the target database
-- The `summaries` table available in the current schema
-- Obsidian vault destination (or any directory where you want Markdown output)
+## Graph / note design
 
-The package depends on:
+The graph is intentionally less hub-and-spoke than before.
 
-- `psycopg[binary]` for Postgres connectivity
-- `pytest` for local test runs via the `dev` extra
+### What changed
 
-## Create a venv and install locally
+- generated daily imports no longer link back to generic `Home` notes
+- imported summary blocks link directly to matching source profiles when recognized
+- imported summary blocks link directly to topic MOCs when heuristic keyword matches fire
+- weekly notes and topic MOCs remain manual / curated notes
+
+### What is heuristic vs manual
+
+**Heuristic / generated**
+- summary-block topic MOC links
+- summary-block source-profile links for recognized agent names
+
+**Manual / curated**
+- source profile notes in `Sources/`
+- topic MOCs in `Topics/`
+- weekly theme notes in `Themes/`
+- any judgment about whether a narrative is durable or noise
+
+## Install locally
 
 From `financial_news/`:
 
@@ -76,7 +104,7 @@ python -m pip install --upgrade pip
 python -m pip install '.[dev]'
 ```
 
-After that, you can use either form:
+After that, either form works:
 
 ```bash
 financial-news-ingest --help
@@ -87,60 +115,8 @@ python -m financial_news --help
 ## Run tests
 
 ```bash
-pytest
+pytest -q
 ```
-
-## Running against the local `adobi` DB on the Mac mini now
-
-If Postgres is local and accessible with the default fallback connection logic, this is enough:
-
-```bash
-financial-news-ingest
-```
-
-When no `--dsn` is supplied, the package tries local candidates such as:
-
-- `dbname=adobi host=127.0.0.1 port=5432`
-- `dbname=adobi host=127.0.0.1 port=5432 user=<current-user>`
-- `dbname=adobi`
-- `dbname=adobi user=<current-user>`
-
-If you want to be explicit on the Mac mini, you can run:
-
-```bash
-financial-news-ingest --dsn 'dbname=adobi host=127.0.0.1 port=5432'
-```
-
-By default, output is written into this package directory itself, and state is written to:
-
-```text
-financial_news/.state/ingest_state.json
-```
-
-For real operator runs, prefer passing `--output-root /path/to/your/obsidian/vault/financial_news` so live ingestion writes into the actual vault instead of the checked-in sample snapshot in this repository.
-
-## Configuring a production Mac laptop later
-
-For a remote or production database, provide a DSN either with an environment variable or a CLI flag.
-
-### Environment variable
-
-```bash
-export FINANCIAL_NEWS_DSN='postgresql://username:password@db-host:5432/adobi'
-financial-news-ingest --output-root /path/to/your/obsidian/vault/financial_news
-```
-
-`DATABASE_URL` is also accepted as a fallback.
-
-### CLI override
-
-```bash
-financial-news-ingest \
-  --dsn 'postgresql://username:password@db-host:5432/adobi' \
-  --output-root /path/to/your/obsidian/vault/financial_news
-```
-
-`--dsn` wins over environment variables when both are present.
 
 ## CLI options
 
@@ -150,116 +126,150 @@ financial-news-ingest \
 --since-id      Ignore saved state and start from rows with id > this value
 --output-root   Destination root for markdown + attachments
 --state-path    Override the JSON state file location
+--path-remap    Remap attachment paths before copying (repeatable FROM=TO)
 --reset-state   Delete the saved state before running
 --dry-run       Parse and log rows without writing markdown or state
 --log-level     Python logging level (default: INFO)
 ```
 
-## Output structure
+## Real remote-operator workflow
 
-Given an output root such as `/vault/financial_news`, the ingester creates a structure like:
-
-```text
-/vault/financial_news/
-├── .state/
-│   └── ingest_state.json
-├── 2026-03/
-│   └── 2026-03-30_summary.md
-└── attachments/
-    └── 2026-03-30/
-        ├── Agent_CNBC_1_<hash>.png
-        └── Agent_CNBC_2_<hash>.png
-```
-
-### Markdown note format
-
-Each day file starts with a single title line:
-
-```markdown
-# 2026-03-30 summary
-```
-
-Each ingested row appends a block similar to:
-
-```markdown
----
-<!-- source-summary-id: 123 -->
-## 2026-03-30T16:00:00+00:00 — Agent CNBC
-
-- Source row id: `123`
-- Agent: `Agent CNBC`
-
-### Headlines
-- Treasuries steady after CPI
-
-### Insights
-- Rate-cut pricing held roughly flat.
-
-### Attachments
-![[attachments/2026-03-30/Agent_CNBC_1_ab12cd34ef.png]]
-```
-
-## State file behavior
-
-The state store is a simple JSON file containing the last successfully processed id, for example:
-
-```json
-{
-  "last_processed_id": 123
-}
-```
-
-Important behavior:
-
-- if the state file is missing, ingestion starts from the beginning
-- after a successful non-dry-run ingest, the last processed id is updated
-- `--since-id` overrides the saved state for that run
-- `--reset-state` deletes the saved state before ingest begins
-- `--dry-run` does **not** write or update the state file
-
-## Attachment handling notes
-
-- only paths that look like local filesystem paths are copied
-- remote URLs such as `https://...` are not downloaded
-- missing files are skipped with a warning
-- copied files are renamed with a short hash suffix derived from the source path so names remain stable and collision-resistant
-- copied attachments are embedded with Obsidian wiki-image syntax: `![[relative/path.png]]`
-
-## Obsidian notes
-
-This package targets standard Obsidian-friendly Markdown conventions:
-
-- day files grouped under month folders like `2026-03/`
-- image embeds written as `![[attachments/...]]`
-- append-only blocks separated with `---`
-- source row ids preserved in HTML comments for traceability
-
-## Sample command and expected result
-
-Example local run against the Mac mini database:
+For Attila's remote MacBook workflow, the recommended entrypoint is:
 
 ```bash
-financial-news-ingest \
-  --dsn 'dbname=adobi host=127.0.0.1 port=5432' \
-  --output-root /Users/sacsimoto/GitHub/Knowledge_Bases/financial_news
+./financial_news/scripts/run_remote_import.sh
 ```
 
-Expected result:
+Run it from the repo root after setting the environment variables you actually need.
 
-- new rows from `summaries` are fetched in ascending `id` order
-- `2026-03/2026-03-30_summary.md` is created if needed, otherwise appended to
-- any local image attachments referenced by those rows are copied into `attachments/2026-03-30/`
-- `.state/ingest_state.json` is updated with the newest processed row id
-- rerunning the command only ingests rows with larger ids, unless you pass `--since-id` or `--reset-state`
+### Recommended mounted share root
 
-## Development notes
+The docs and script assume the mounted share root is:
 
-The test suite covers:
+```text
+/Volumes/adobi/d-ai-trader
+```
+
+By default the script uses this output-root shape:
+
+```text
+/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news
+```
+
+The script refuses to write imported output back into the repo checkout.
+
+### Real DSN shape to prefer
+
+For remote operation, prefer an explicit psycopg key/value DSN such as:
+
+```bash
+export FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5'
+```
+
+That shape matches the package's current local-candidate style better than hand-wavy placeholder URIs.
+
+A PostgreSQL URL also works, but the operator docs and examples use the key/value DSN above.
+
+## Path remap concept
+
+Rows can contain local attachment paths captured on another machine. The import job therefore supports a simple prefix remap contract:
+
+```text
+--path-remap FROM=TO
+```
+
+Example:
+
+```bash
+export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader'
+export FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader'
+./financial_news/scripts/run_remote_import.sh --limit 10
+```
+
+Meaning:
+
+- if a row references `/Users/attila/d-ai-trader/.../capture.png`
+- the importer can rewrite it to `/Volumes/adobi/d-ai-trader/.../capture.png`
+- then copy the file into the vault's `attachments/YYYY-MM-DD/` folder
+
+### Implemented today
+
+- one or more repeatable prefix remaps via `--path-remap FROM=TO`
+- remap is applied before attachment existence checks
+- copied attachments still land in the vault-local `attachments/YYYY-MM-DD/` folder
+
+### Not implemented here
+
+- regex remapping
+- database-side path rewriting
+- network file transfer or rsync
+
+## Attachment behavior
+
+### Implemented today
+
+- local filesystem paths are copied into `attachments/YYYY-MM-DD/`
+- remote URLs are not downloaded
+- missing files are skipped with a warning
+- filenames get a short hash suffix to avoid collisions
+- if the exact destination file already exists, it is reused rather than recopied
+
+### Compression / storage optimization behavior
+
+Implemented behavior today is intentionally conservative:
+
+- files are copied with `shutil.copy2`
+- there is **no image recompression or format transcoding** in this repo
+- the only storage optimization currently implemented is collision-safe naming and reusing an already-copied destination file
+
+If X1 later adds richer compression/transcoding, that would be an extension beyond what this branch documents as implemented.
+
+## Safe pruning behavior
+
+There is **no automatic pruning job** in this branch.
+
+That is deliberate.
+
+- the importer appends notes and copies attachments
+- it does not delete old note folders
+- it does not delete old attachments
+- `--reset-state` only clears the ingestion cursor; it does not prune vault content
+
+Safe operator stance today: prune manually, with intent, outside the importer.
+
+## Example remote run
+
+```bash
+cd /path/to/Knowledge_Bases
+export FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5'
+export FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news'
+export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader'
+export FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader'
+./financial_news/scripts/run_remote_import.sh --log-level INFO
+```
+
+## Recommended daily cron shape
+
+For a once-per-day weekday import on America/Los_Angeles time, a sensible default is shortly after the U.S. cash session finishes and the local network share should still be mounted:
+
+```cron
+CRON_TZ=America/Los_Angeles
+20 14 * * 1-5 cd /path/to/Knowledge_Bases && FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5' FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news' FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader' FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader' ./financial_news/scripts/run_remote_import.sh --log-level INFO >> ~/Library/Logs/financial_news_remote_import.log 2>&1
+```
+
+Why 14:20 PT?
+
+- it is after the 13:00 PT market close
+- it leaves time for same-day summaries/screenshots to finish landing
+- it still runs during normal local-network uptime on the MacBook/share side
+
+## Development / validation notes
+
+The tests now cover:
 
 - parser extraction / normalization behavior
-- Obsidian markdown rendering
-- attachment copy behavior
-- JSON state file round-trips
-- CLI ingest orchestration with mocked database calls and temp directories
-
-That keeps unit tests fast and deterministic without requiring a live Postgres instance.
+- ingest state behavior
+- operator-facing `--path-remap` parsing and handoff
+- attachment remapping and copy behavior
+- summary-block source-profile and topic-MOC links
+- generated note headers staying free of generic `Home` graph attractors

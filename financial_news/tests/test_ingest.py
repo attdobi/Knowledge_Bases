@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 import financial_news.ingest as ingest
 from financial_news.models import SummaryRecord, TableSchema
 
@@ -41,6 +43,24 @@ def make_schema() -> TableSchema:
         content_column="content",
         timestamp_column="created_at",
     )
+
+
+def test_parse_path_remaps_accepts_repeatable_from_to_pairs() -> None:
+    remaps = ingest.parse_path_remaps(
+        [
+            "/Users/attila/d-ai-trader=/Volumes/adobi/d-ai-trader",
+            "~/captures=/Volumes/adobi/captures",
+        ]
+    )
+
+    assert remaps[0] == (Path("/Users/attila/d-ai-trader"), Path("/Volumes/adobi/d-ai-trader"))
+    assert remaps[1][0].name == "captures"
+    assert remaps[1][1] == Path("/Volumes/adobi/captures")
+
+
+def test_parse_path_remaps_rejects_invalid_values() -> None:
+    with pytest.raises(ValueError):
+        ingest.parse_path_remaps(["/from-only"])
 
 
 def test_main_ingests_records_and_updates_state(tmp_path: Path, monkeypatch) -> None:
@@ -84,8 +104,43 @@ def test_main_ingests_records_and_updates_state(tmp_path: Path, monkeypatch) -> 
     assert summary_path.exists()
     content = summary_path.read_text(encoding="utf-8")
     assert "source-summary-id: 101" in content
-    assert "Treasuries steady after CPI" in content
+    assert "[[Sources/CNBC|CNBC]]" in content
+    assert "[[Topics/Rates and Fed|Rates and Fed]]" in content
     assert "![[attachments/2026-03-30/" in content
+    assert "[[Home]]" not in content
+
+
+def test_main_passes_path_remaps_to_append_summary(tmp_path: Path, monkeypatch) -> None:
+    output_root = tmp_path / "vault"
+    state_path = tmp_path / "state" / "ingest_state.json"
+    seen = {}
+
+    monkeypatch.setattr(ingest, "connect", lambda dsn: DummyConnection())
+    monkeypatch.setattr(ingest, "discover_schema", lambda conn: make_schema())
+    monkeypatch.setattr(ingest, "fetch_summaries", lambda conn, schema, since_id=None, limit=None: [make_record(101)])
+
+    def fake_append_summary(output_root_arg, record, path_remaps=None):
+        seen["path_remaps"] = path_remaps
+        path = output_root_arg / "2026-03" / "2026-03-30_summary.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ok", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(ingest, "append_summary", fake_append_summary)
+
+    result = ingest.main(
+        [
+            "--output-root",
+            str(output_root),
+            "--state-path",
+            str(state_path),
+            "--path-remap",
+            "/Users/attila/d-ai-trader=/Volumes/adobi/d-ai-trader",
+        ]
+    )
+
+    assert result == 0
+    assert seen["path_remaps"] == [(Path("/Users/attila/d-ai-trader"), Path("/Volumes/adobi/d-ai-trader"))]
 
 
 def test_main_uses_saved_state_and_skips_writes_during_dry_run(tmp_path: Path, monkeypatch) -> None:

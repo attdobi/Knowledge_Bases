@@ -1,6 +1,6 @@
 # Knowledge Base
 
-This repo currently packages the `financial_news/` ingestion tool plus a checked-in sample Obsidian vault snapshot used to validate note structure, attachments, and operator workflows.
+This repo packages the `financial_news/` ingestion tool plus the tracked vault structure needed to operate it: source profiles, topic MOCs, weekly-note templates, and operator documentation.
 
 ## Where to start
 
@@ -10,7 +10,8 @@ This repo currently packages the `financial_news/` ingestion tool plus a checked
 
 ## Repo hygiene notes
 
-- Sample day notes, templates, source pages, and attachments under `financial_news/` are tracked intentionally as reference output.
+- Tracked repo assets are code, docs, tests, templates, source profiles, weekly notes, and topic MOCs.
+- Imported day-note output and screenshot attachments should live outside the repo checkout and remain untracked.
 - Local runtime state stays in `financial_news/.state/` and should remain untracked.
 - Local virtualenvs, pytest caches, coverage output, and macOS/editor noise are ignored at both repo and package level.
 

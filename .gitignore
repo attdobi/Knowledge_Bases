@@ -16,3 +16,5 @@ dist/
 
 # Runtime state and scratch files
 .state/
+financial_news/attachments/
+financial_news/20[0-9][0-9]-[0-1][0-9]/

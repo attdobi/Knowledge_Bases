@@ -1,25 +1,51 @@
 # financial_news operator runbook
 
-This runbook is for the person who needs to install, validate, and operate the `financial_news` ingester without reverse-engineering the code.
+This runbook is for the person operating the `financial_news` import from the repo without reverse-engineering the package.
 
-## What this tool does
+## First principles
 
-- Reads new rows from the Postgres `summaries` table
-- Normalizes nested payloads into headlines, insights, timestamps, and local attachments
-- Appends each summary to a day note in an Obsidian-friendly vault layout
-- Stores the incremental cursor in `.state/ingest_state.json`
+### What belongs in git
 
-## Important safety note
+Keep these tracked:
 
-If you do **not** pass `--output-root`, the tool writes into this package directory itself.
+- code
+- docs
+- tests
+- templates
+- source profiles under `Sources/`
+- topic MOCs under `Topics/`
+- weekly theme notes under `Themes/`
 
-That is fine for local development and fixture generation, but it is **not** the recommended production mode because it will modify the checked-in sample vault snapshot in this repo.
+### What must stay out of git
 
-For production or real operator use, point `--output-root` at the actual Obsidian vault location.
+Do **not** commit or push:
+
+- imported day-note folders like `2026-04/`
+- screenshot attachment folders under `attachments/`
+- runtime state under `.state/`
+- other bulky generated vault payload
+
+The importer is meant to write into the real vault output path, not into the repo checkout.
+
+## One-command repo entrypoint
+
+Preferred operator entrypoint:
+
+```bash
+./financial_news/scripts/run_remote_import.sh
+```
+
+The script:
+
+- runs from the repo
+- uses `.venv/bin/python` if available
+- defaults the vault output to `/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news`
+- refuses to write imported output into the repo checkout
+- optionally forwards a path remap into the Python CLI
 
 ## First-time setup
 
-From the `financial_news/` directory:
+From `financial_news/`:
 
 ```bash
 python3 -m venv .venv
@@ -29,111 +55,193 @@ python -m pip install '.[dev]'
 pytest -q
 ```
 
-## Pre-flight checklist
+## Environment to set on the operator machine
 
-Before running against a real database:
+### 1) DSN
 
-1. Confirm you are in the intended worktree/branch.
-2. Activate the local virtualenv.
-3. Confirm the destination vault path you want to write to.
-4. Confirm your DSN source:
-   - `--dsn 'postgresql://…'`
-   - `FINANCIAL_NEWS_DSN`
-   - `DATABASE_URL`
-5. Decide whether you want:
-   - incremental mode (normal run)
-   - dry-run validation
-   - a controlled backfill with `--since-id`
-   - a full cursor reset with `--reset-state`
-
-## Recommended operator commands
-
-### 1) Validate parsing without writing files
+Prefer a real psycopg key/value DSN:
 
 ```bash
-financial-news-ingest \
-  --dsn 'postgresql://username:password@db-host:5432/adobi' \
-  --output-root /path/to/obsidian/vault/financial_news \
-  --dry-run \
-  --limit 5
+export FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5'
 ```
 
-Use this when validating connectivity, schema discovery, and parsing before touching markdown or state.
+Implemented today:
+
+- `--dsn` overrides environment
+- `FINANCIAL_NEWS_DSN` is accepted
+- `DATABASE_URL` still works as a fallback in the Python package
+
+### 2) Output root
+
+Recommended:
+
+```bash
+export FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news'
+```
+
+That path should be the real vault location, outside the repo checkout.
+
+### 3) Path remap, if attachment paths were captured on another machine
+
+Example:
+
+```bash
+export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader'
+export FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader'
+```
+
+Meaning: rewrite attachment paths from the source machine's local root to the mounted share root before checking whether the file exists.
+
+## Pre-flight checklist
+
+Before a real run:
+
+1. Confirm the share is mounted at `/Volumes/adobi/d-ai-trader`.
+2. Confirm you are on branch `feat/financial-news-followup-pass-x2` or the intended successor branch.
+3. Activate the virtualenv if you are running Python commands manually.
+4. Confirm `FINANCIAL_NEWS_DSN` is set to the real remote/local-network database.
+5. Confirm `FINANCIAL_NEWS_OUTPUT_ROOT` points outside the repo.
+6. Decide whether path remap is needed.
+7. Decide whether this is a dry run, normal incremental run, controlled backfill, or state reset.
+
+## Recommended commands
+
+### 1) Smoke-test the operator wiring without writing files
+
+```bash
+./financial_news/scripts/run_remote_import.sh --dry-run --limit 5 --log-level INFO
+```
+
+Use this first when validating:
+
+- DB connectivity
+- schema discovery
+- row parsing
+- path-remap wiring
 
 ### 2) Normal incremental run
 
 ```bash
-financial-news-ingest \
-  --dsn 'postgresql://username:password@db-host:5432/adobi' \
-  --output-root /path/to/obsidian/vault/financial_news
+./financial_news/scripts/run_remote_import.sh --log-level INFO
 ```
 
 Behavior:
 
-- reads `.state/ingest_state.json` if present
+- reads the saved cursor from `.state/ingest_state.json` under the real output root
 - fetches rows with `id > last_processed_id`
-- appends markdown blocks for each row
+- appends new markdown blocks into the real vault output path
 - copies local attachments into `attachments/YYYY-MM-DD/`
-- updates `.state/ingest_state.json` after a successful non-dry-run ingest
+- updates the saved cursor after a successful non-dry-run import
 
 ### 3) Controlled backfill from a known row id
 
 ```bash
-financial-news-ingest \
-  --dsn 'postgresql://username:password@db-host:5432/adobi' \
-  --output-root /path/to/obsidian/vault/financial_news \
-  --since-id 1200 \
-  --limit 25
+./financial_news/scripts/run_remote_import.sh --since-id 1200 --limit 25 --log-level INFO
 ```
 
-Use this when you want to replay a specific window without deleting the saved state file.
+Use this when you want a narrow replay window without deleting the saved cursor first.
 
-### 4) Reset the saved cursor and start fresh
+### 4) Reset cursor and start fresh
 
 ```bash
-financial-news-ingest \
-  --dsn 'postgresql://username:password@db-host:5432/adobi' \
-  --output-root /path/to/obsidian/vault/financial_news \
-  --reset-state
+./financial_news/scripts/run_remote_import.sh --reset-state --log-level INFO
 ```
 
-Use this only when you intentionally want to discard the saved cursor.
+Important: this clears only the cursor. It does **not** prune old notes or attachments.
 
-## What to verify after a run
+## Implemented vs optional behavior
 
-- `.state/ingest_state.json` contains the newest processed row id
-- the expected day note exists under `YYYY-MM/YYYY-MM-DD_summary.md`
-- appended blocks contain the HTML source id comment for traceability
-- attachments referenced by local filesystem paths were copied into `attachments/YYYY-MM-DD/`
-- rerunning the command does not duplicate already-processed rows unless you changed `--since-id` or reset state
+### Implemented in this branch
+
+- repo-native shell entrypoint
+- path-remap support via `--path-remap FROM=TO`
+- direct source-profile links for recognized agents
+- heuristic topic-MOC links in imported summary blocks
+- reduced generic `Home` links in generated notes
+- gitignore rules to keep generated screenshot/day-note payload out of commits
+
+### Explicitly not implemented here
+
+- automatic pruning of old vault content
+- image recompression/transcoding pipeline
+- network transfer of missing files
+- regex remap rules
+- fully curated topic classification; the topic links are still keyword heuristics
+
+## Attachment behavior
+
+### Implemented today
+
+- copy local files only
+- do not download remote URLs
+- skip missing files with warnings
+- remap source prefixes before existence checks when `--path-remap` is supplied
+- preserve metadata via `copy2`
+- generate collision-safe attachment filenames with a short hash suffix
+
+### Compression / optimization behavior today
+
+- there is no lossy or lossless image recompression in this branch
+- there is no PNG/JPEG transcoding in this branch
+- the only storage optimization implemented is avoiding recopy when the exact destination file already exists
+
+## Safe pruning stance
+
+There is no automatic prune mode.
+
+Safe operator stance:
+
+- do not assume `--reset-state` cleans anything except the cursor
+- if you want to remove stale attachments, do it manually and intentionally
+- prune only after verifying the files are truly orphaned in the real vault
+
+## What the new vault structure means operationally
+
+- `Sources/` = manual source reference notes
+- `Topics/` = manual topic MOCs that generated summaries may link into heuristically
+- `Themes/` = manual weekly consolidation notes
+- generated daily imports should stay lightweight and should not become graph hubs
+
+If a heuristic topic link is wrong, edit the topic note or weekly note manually; do not treat the generated link set as ground truth.
+
+## Recommended cron
+
+For weekday daily operation on America/Los_Angeles time:
+
+```cron
+CRON_TZ=America/Los_Angeles
+20 14 * * 1-5 cd /path/to/Knowledge_Bases && FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5' FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news' FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader' FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader' ./financial_news/scripts/run_remote_import.sh --log-level INFO >> ~/Library/Logs/financial_news_remote_import.log 2>&1
+```
+
+Why this shape:
+
+- weekday-only fits U.S. market rhythm
+- 14:20 PT lands after the 13:00 PT market close
+- the DB host and mounted share are assumed to be on the same local network, so this is a reasonable same-day consolidation window
 
 ## Troubleshooting
 
-### `Unable to connect to Postgres`
+### The script refuses to run because output_root is inside the repo
 
-- Verify the DSN is correct.
-- If you omitted `--dsn`, remember the tool falls back to local `adobi` connection candidates.
-- Confirm Postgres is reachable from the machine where you are running the command.
+That is intentional. Point `FINANCIAL_NEWS_OUTPUT_ROOT` at the real vault, not the git checkout.
 
-### `Table 'summaries' not found in current schema`
+### The script says `/Volumes/adobi` is not mounted
 
-- Confirm you are connected to the expected database/schema.
-- Confirm the table exists in the current schema visible to the selected user.
+Mount the share first, or override `FINANCIAL_NEWS_OUTPUT_ROOT` to another real vault path.
 
-### Command appears to run but no markdown changes show up
+### Postgres connection fails
 
-- Check whether `--dry-run` was enabled.
-- Check the current `.state/ingest_state.json` cursor.
-- Check whether you accidentally wrote to the repo snapshot instead of the real vault, or vice versa.
+- verify `FINANCIAL_NEWS_DSN`
+- verify the DB host is reachable on the local network
+- verify the selected role can see the `summaries` table
 
-### Attachments are missing from the note
+### Notes import but attachments are missing
 
-- Only local filesystem paths are copied.
-- Remote URLs are intentionally not downloaded.
-- Missing local files are skipped with a warning.
+- verify whether attachment paths in the rows need a remap
+- verify `FINANCIAL_NEWS_PATH_REMAP_FROM` / `TO`
+- remember remote URLs are intentionally not downloaded
+- remember missing files are skipped, not retried by another transport layer
 
-## Repo hygiene expectations
+### Topic links look incomplete or noisy
 
-- Keep `.venv/`, `.pytest_cache/`, coverage output, and `.state/` untracked.
-- Do not commit ad-hoc local scratch files into the repo root or package root.
-- Treat the checked-in markdown/attachment snapshot as reference content unless you are intentionally updating fixtures or sample output.
+That is expected sometimes. Topic MOC links are heuristic, not fully curated classification.
