@@ -12,6 +12,11 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
 [project.scripts]
 financial-news-ingest = "financial_news.ingest:main"
 
@@ -20,3 +25,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
