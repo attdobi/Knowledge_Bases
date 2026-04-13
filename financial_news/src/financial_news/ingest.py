@@ -6,12 +6,20 @@ import logging
 from pathlib import Path
 from typing import Sequence
 
-from financial_news.config import AppConfig
+from financial_news.config import AppConfig, parse_path_remap
 from financial_news.db import connect, discover_schema, fetch_summaries
 from financial_news.obsidian import append_summary, prune_orphan_attachments
 from financial_news.state import StateStore
 
 LOGGER = logging.getLogger(__name__)
+
+
+def parse_path_remaps(values: Sequence[str] | None) -> list[tuple[Path, Path]]:
+    remaps: list[tuple[Path, Path]] = []
+    for value in values or []:
+        parsed = parse_path_remap(value)
+        remaps.append((parsed.source, parsed.destination))
+    return remaps
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--path-remap",
         action="append",
         default=[],
-        metavar="SOURCE=DEST",
+        metavar="FROM=TO",
         help="Repeatable attachment remap applied before local copy, e.g. /Users/adobi/d-ai-trader=/Volumes/adobi/d-ai-trader",
     )
     parser.add_argument(
@@ -71,6 +79,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     configure_logging(args.log_level)
 
+    try:
+        cli_path_remaps = parse_path_remaps(args.path_remap)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     config = AppConfig.load(
         dsn=args.dsn,
         output_root=args.output_root,
@@ -102,6 +115,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "path_remaps": [
                 {"source": remap.source.as_posix(), "destination": remap.destination.as_posix()}
                 for remap in config.attachments.path_remaps
+            ],
+            "cli_path_remaps": [
+                {"source": source.as_posix(), "destination": destination.as_posix()}
+                for source, destination in cli_path_remaps
             ],
         },
     )
@@ -142,11 +159,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 len(record.attachments),
                 record.categories,
             )
-        else:
-            written_paths.append(append_summary(config.output_root, record, config.attachments))
-            LOGGER.info("Appended row %s to %s", record.row_id, written_paths[-1])
-            state_store.save({"last_processed_id": record.row_id})
-            LOGGER.info("Updated state file %s with last_processed_id=%s", config.state_path, record.row_id)
+            continue
+
+        written_paths.append(append_summary(config.output_root, record, config.attachments))
+        LOGGER.info("Appended row %s to %s", record.row_id, written_paths[-1])
+        state_store.save({"last_processed_id": record.row_id})
+        LOGGER.info("Updated state file %s with last_processed_id=%s", config.state_path, record.row_id)
+
     if args.prune_orphan_attachments and not args.dry_run:
         pruned = prune_orphan_attachments(config.output_root)
         LOGGER.info("Pruned %s orphan attachments", len(pruned))

@@ -2,15 +2,21 @@
 tags:
   - financial-news
   - source/cnbc
+  - curated
 ---
 
 # CNBC
 
-## Focus
+## Best for
 - market movers
 - intraday sentiment
-- headline catalysts
+- relative-strength tape color
+
+## Common topic MOCs
+- [[Topics/Tech|Tech]]
+- [[Topics/Rates and Fed|Rates and Fed]]
+- [[Topics/Financials|Financials]]
 
 ## Notes
-- Often useful for fast-moving equities and tape color.
-- Good candidate for relative-strength ideas when leadership is narrow.
+- Usually the cleanest source for fast-moving equities and tape context.
+- Good when leadership is narrow and stock-picking matters more than index direction.

@@ -7,7 +7,8 @@ tags:
 
 # {{date:GGGG-[W]WW}}
 
-[[Home]] · [[Themes/Home|Themes]]
+## Topic MOCs in scope
+-
 
 ## Core narratives
 - 

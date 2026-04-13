@@ -58,7 +58,7 @@ def test_parse_summary_record_extracts_nested_fields_dedupes_and_classifies_topi
     ]
     assert record.attachments == [Path("/tmp/chart-one.png"), Path("./captures/chart-two.png")]
     assert record.tickers == ["TLT", "JPM", "NVDA"]
-    assert record.categories == ["Energy", "AI", "Tech", "Rates/Fed", "Financials"]
+    assert record.categories == ["AI", "Tech", "Energy", "Rates and Fed", "Financials"]
 
 
 def test_parse_summary_record_uses_fallback_agent_and_row_timestamp_when_needed() -> None:
