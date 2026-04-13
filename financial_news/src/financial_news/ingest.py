@@ -72,7 +72,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     written_paths: list[Path] = []
-    last_id = since_id
     for record in records:
         if args.dry_run:
             LOGGER.info(
@@ -86,12 +85,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             written_paths.append(append_summary(config.output_root, record))
             LOGGER.info("Appended row %s to %s", record.row_id, written_paths[-1])
-        last_id = record.row_id
-
-    if not args.dry_run and last_id is not None:
-        state_store.save({"last_processed_id": last_id})
-        LOGGER.info("Updated state file %s with last_processed_id=%s", config.state_path, last_id)
-
+            state_store.save({"last_processed_id": record.row_id})
+            LOGGER.info("Updated state file %s with last_processed_id=%s", config.state_path, record.row_id)
     LOGGER.info("Processed %s summaries", len(records))
     if written_paths:
         unique_paths = sorted({path.as_posix() for path in written_paths})
