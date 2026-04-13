@@ -12,7 +12,7 @@ def test_normalize_content_decodes_json_strings_and_preserves_plain_text() -> No
     assert normalize_content(None) is None
 
 
-def test_parse_summary_record_extracts_nested_fields_and_dedupes() -> None:
+def test_parse_summary_record_extracts_nested_fields_dedupes_and_classifies_topics() -> None:
     row_timestamp = datetime(2026, 3, 30, 7, 0, tzinfo=timezone.utc)
     content = {
         "assistant": "Agent CNBC",
@@ -51,6 +51,7 @@ def test_parse_summary_record_extracts_nested_fields_and_dedupes() -> None:
         "Risk appetite improved through the session.",
     ]
     assert record.attachments == [Path("/tmp/chart-one.png"), Path("./captures/chart-two.png")]
+    assert record.categories == ["Energy", "Rates/Fed"]
 
 
 def test_parse_summary_record_uses_fallback_agent_and_row_timestamp_when_needed() -> None:
@@ -69,3 +70,4 @@ def test_parse_summary_record_uses_fallback_agent_and_row_timestamp_when_needed(
     assert record.headlines == []
     assert record.insights == ["Markets were mixed into the close."]
     assert record.attachments == []
+    assert record.categories == []

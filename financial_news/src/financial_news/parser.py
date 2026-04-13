@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from financial_news.models import SummaryRecord
+from financial_news.topics import classify_topics
 
 AGENT_KEYS = ("agent", "source_agent", "assistant", "author", "bot", "model")
 TIMESTAMP_KEYS = ("timestamp", "created_at", "generated_at", "published_at", "datetime", "date", "time")
@@ -154,6 +155,7 @@ def parse_summary_record(
 
     agent = str(agent_value).strip() if agent_value not in (None, "") else None
     content_timestamp = parse_datetime(timestamp_value)
+    categories = classify_topics(agent, headlines, insights)
     return SummaryRecord(
         row_id=row_id,
         row_timestamp=row_timestamp,
@@ -162,5 +164,6 @@ def parse_summary_record(
         headlines=headlines,
         insights=insights,
         attachments=attachments,
+        categories=categories,
         raw_content=content,
     )
