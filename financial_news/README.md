@@ -168,7 +168,7 @@ The script refuses to write imported output back into the repo checkout.
 For remote operation, prefer an explicit psycopg key/value DSN such as:
 
 ```bash
-export FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5'
+export FINANCIAL_NEWS_DSN='host=192.168.4.30 port=5432 dbname=adobi user=adobi sslmode=disable gssencmode=disable'
 ```
 
 That shape matches the package's current local-candidate style better than hand-wavy placeholder URIs.
@@ -186,14 +186,14 @@ Rows can contain local attachment paths captured on another machine. The import 
 Example:
 
 ```bash
-export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader'
+export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/adobi/d-ai-trader'
 export FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader'
 ./financial_news/scripts/run_remote_import.sh --limit 10
 ```
 
 Meaning:
 
-- if a row references `/Users/attila/d-ai-trader/.../capture.png`
+- if a row references `/Users/adobi/d-ai-trader/.../capture.png`
 - the importer can rewrite it to `/Volumes/adobi/d-ai-trader/.../capture.png`
 - then copy the file into the vault's `attachments/YYYY-MM-DD/` folder
 
@@ -244,9 +244,9 @@ Safe operator stance: run prune deliberately, after verifying the real vault pat
 
 ```bash
 cd /path/to/Knowledge_Bases
-export FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5'
+export FINANCIAL_NEWS_DSN='host=192.168.4.30 port=5432 dbname=adobi user=adobi sslmode=disable gssencmode=disable'
 export FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news'
-export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader'
+export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/adobi/d-ai-trader'
 export FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader'
 ./financial_news/scripts/run_remote_import.sh --log-level INFO
 ```
@@ -257,7 +257,7 @@ For a once-per-day weekday import on America/Los_Angeles time, a sensible defaul
 
 ```cron
 CRON_TZ=America/Los_Angeles
-20 14 * * 1-5 cd /path/to/Knowledge_Bases && FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5' FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news' FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader' FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader' ./financial_news/scripts/run_remote_import.sh --log-level INFO >> ~/Library/Logs/financial_news_remote_import.log 2>&1
+20 14 * * 1-5 cd /path/to/Knowledge_Bases && FINANCIAL_NEWS_DSN='host=192.168.4.30 port=5432 dbname=adobi user=adobi sslmode=disable gssencmode=disable' FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news' FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/adobi/d-ai-trader' FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader' ./financial_news/scripts/run_remote_import.sh --log-level INFO >> ~/Library/Logs/financial_news_remote_import.log 2>&1
 ```
 
 Why 14:20 PT?

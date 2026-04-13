@@ -62,7 +62,7 @@ pytest -q
 Prefer a real psycopg key/value DSN:
 
 ```bash
-export FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5'
+export FINANCIAL_NEWS_DSN='host=192.168.4.30 port=5432 dbname=adobi user=adobi sslmode=disable gssencmode=disable'
 ```
 
 Implemented today:
@@ -86,7 +86,7 @@ That path should be the real vault location, outside the repo checkout.
 Example:
 
 ```bash
-export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader'
+export FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/adobi/d-ai-trader'
 export FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader'
 ```
 
@@ -214,7 +214,7 @@ For weekday daily operation on America/Los_Angeles time:
 
 ```cron
 CRON_TZ=America/Los_Angeles
-20 14 * * 1-5 cd /path/to/Knowledge_Bases && FINANCIAL_NEWS_DSN='host=192.168.1.50 port=5432 dbname=adobi user=postgres password=REDACTED sslmode=disable connect_timeout=5' FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news' FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/attila/d-ai-trader' FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader' ./financial_news/scripts/run_remote_import.sh --log-level INFO >> ~/Library/Logs/financial_news_remote_import.log 2>&1
+20 14 * * 1-5 cd /path/to/Knowledge_Bases && FINANCIAL_NEWS_DSN='host=192.168.4.30 port=5432 dbname=adobi user=adobi sslmode=disable gssencmode=disable' FINANCIAL_NEWS_OUTPUT_ROOT='/Volumes/adobi/d-ai-trader/Knowledge_Bases/financial_news' FINANCIAL_NEWS_PATH_REMAP_FROM='/Users/adobi/d-ai-trader' FINANCIAL_NEWS_PATH_REMAP_TO='/Volumes/adobi/d-ai-trader' ./financial_news/scripts/run_remote_import.sh --log-level INFO >> ~/Library/Logs/financial_news_remote_import.log 2>&1
 ```
 
 Why this shape:
