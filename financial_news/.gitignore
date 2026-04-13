@@ -18,3 +18,4 @@ dist/
 
 # macOS / editor noise
 .DS_Store
+.obsidian/
