@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+import re
 from typing import Any, Iterable
 
 from financial_news.models import SummaryRecord
@@ -27,6 +28,20 @@ ATTACHMENT_KEYS = (
     "media",
 )
 TEXTISH_ITEM_KEYS = ("title", "headline", "name", "text", "summary", "insight", "description", "path", "file", "url")
+TICKER_KEYS = (
+    "ticker",
+    "tickers",
+    "symbol",
+    "symbols",
+    "stock_symbol",
+    "stock_symbols",
+    "ticker_symbol",
+    "ticker_symbols",
+)
+TICKER_SPLIT_RE = re.compile(r"[\s,;|/]+")
+TICKER_TOKEN_RE = re.compile(r"\$?[A-Za-z][A-Za-z0-9]{0,5}(?:[.-][A-Za-z0-9]{1,5})?")
+PARENTHETICAL_TICKER_RE = re.compile(r"\(([A-Za-z][A-Za-z0-9]{0,5}(?:[.-][A-Za-z0-9]{1,5})?)\)")
+EXPLICIT_TICKER_RE = re.compile(r"\$([A-Za-z][A-Za-z0-9]{0,5}(?:[.-][A-Za-z0-9]{1,5})?)")
 
 
 def normalize_content(content: Any) -> dict[str, Any] | list[Any] | str | None:
@@ -93,6 +108,11 @@ def dedupe_keep_order(values: Iterable[str]) -> list[str]:
     return result
 
 
+def is_ticker_key(key: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "_", key.strip().lower())
+    return any(candidate in normalized for candidate in TICKER_KEYS)
+
+
 def walk_dicts(value: Any) -> Iterable[dict[str, Any]]:
     if isinstance(value, dict):
         yield value
@@ -136,6 +156,63 @@ def find_attachments(content: Any) -> list[Path]:
     return [Path(path).expanduser() for path in dedupe_keep_order(found) if looks_like_local_path(path)]
 
 
+def normalize_ticker(value: str) -> str | None:
+    candidate = value.strip().upper().lstrip("$").strip("()[]{}<>'\".,:;!?")
+    if not candidate or not TICKER_TOKEN_RE.fullmatch(candidate):
+        return None
+    return candidate
+
+
+def extract_tickers_from_value(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        matches: list[str] = []
+        if any(separator in stripped for separator in (",", ";", "|", "/", "\n")) or stripped.upper() == stripped:
+            matches.extend(filter(None, (normalize_ticker(token) for token in TICKER_SPLIT_RE.split(stripped))))
+        matches.extend(filter(None, (normalize_ticker(token) for token in PARENTHETICAL_TICKER_RE.findall(stripped))))
+        matches.extend(filter(None, (normalize_ticker(token) for token in EXPLICIT_TICKER_RE.findall(stripped))))
+        normalized = normalize_ticker(stripped)
+        if normalized:
+            matches.append(normalized)
+        return dedupe_keep_order(matches)
+    if isinstance(value, dict):
+        prioritized: list[str] = []
+        for key, nested in value.items():
+            if is_ticker_key(key):
+                prioritized.extend(extract_tickers_from_value(nested))
+        if prioritized:
+            return dedupe_keep_order(prioritized)
+        for fallback_key in ("value", "code", "id"):
+            if fallback_key in value:
+                extracted = extract_tickers_from_value(value[fallback_key])
+                if extracted:
+                    return extracted
+        return []
+    if isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray)):
+        matches: list[str] = []
+        for item in value:
+            matches.extend(extract_tickers_from_value(item))
+        return dedupe_keep_order(matches)
+    return []
+
+
+def find_tickers(content: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(content, dict):
+        for key, value in content.items():
+            if is_ticker_key(key):
+                found.extend(extract_tickers_from_value(value))
+            found.extend(find_tickers(value))
+    elif isinstance(content, list):
+        for item in content:
+            found.extend(find_tickers(item))
+    return dedupe_keep_order(found)
+
+
 def parse_summary_record(
     row_id: int,
     row_timestamp: datetime | None,
@@ -147,6 +224,7 @@ def parse_summary_record(
     headlines = find_collection(content, HEADLINE_KEYS)
     insights = find_collection(content, INSIGHT_KEYS)
     attachments = find_attachments(content)
+    tickers = find_tickers(content)
 
     if not headlines and isinstance(content, dict):
         headlines = dedupe_keep_order(flatten_strings(content.get("headlines") or content.get("headline")))
@@ -155,7 +233,7 @@ def parse_summary_record(
 
     agent = str(agent_value).strip() if agent_value not in (None, "") else None
     content_timestamp = parse_datetime(timestamp_value)
-    categories = classify_topics(agent, headlines, insights)
+    categories = classify_topics(agent, headlines, insights, tickers)
     return SummaryRecord(
         row_id=row_id,
         row_timestamp=row_timestamp,
@@ -164,6 +242,7 @@ def parse_summary_record(
         headlines=headlines,
         insights=insights,
         attachments=attachments,
+        tickers=tickers,
         categories=categories,
         raw_content=content,
     )

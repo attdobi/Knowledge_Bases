@@ -10,6 +10,7 @@ class TopicDefinition:
     name: str
     slug: str
     patterns: tuple[re.Pattern[str], ...]
+    tickers: frozenset[str] = frozenset()
 
 
 TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
@@ -34,6 +35,29 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\bpower demand\b",
             )
         ),
+        tickers=frozenset(
+            {
+                "APA",
+                "AR",
+                "BP",
+                "COP",
+                "CVX",
+                "DVN",
+                "EOG",
+                "EQT",
+                "FANG",
+                "HAL",
+                "LNG",
+                "MPC",
+                "OXY",
+                "PSX",
+                "SHEL",
+                "SLB",
+                "TTE",
+                "VLO",
+                "XOM",
+            }
+        ),
     ),
     TopicDefinition(
         name="AI",
@@ -50,6 +74,26 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\binference\b",
                 r"\bmodel training\b",
             )
+        ),
+        tickers=frozenset(
+            {
+                "AI",
+                "AMD",
+                "AMZN",
+                "ANET",
+                "ARM",
+                "AVGO",
+                "GOOG",
+                "GOOGL",
+                "META",
+                "MSFT",
+                "MU",
+                "NVDA",
+                "ORCL",
+                "PLTR",
+                "SMCI",
+                "TSM",
+            }
         ),
     ),
     TopicDefinition(
@@ -73,6 +117,29 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\btesla\b",
             )
         ),
+        tickers=frozenset(
+            {
+                "AAPL",
+                "ADBE",
+                "AMD",
+                "AMZN",
+                "AVGO",
+                "CRM",
+                "GOOG",
+                "GOOGL",
+                "INTC",
+                "META",
+                "MSFT",
+                "NFLX",
+                "NOW",
+                "NVDA",
+                "ORCL",
+                "QCOM",
+                "SMCI",
+                "TSLA",
+                "TSM",
+            }
+        ),
     ),
     TopicDefinition(
         name="Utilities",
@@ -87,6 +154,22 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\btransmission\b",
                 r"\bdistribution\b",
             )
+        ),
+        tickers=frozenset(
+            {
+                "AEP",
+                "AWK",
+                "D",
+                "DUK",
+                "ED",
+                "EIX",
+                "EXC",
+                "NEE",
+                "PEG",
+                "SO",
+                "SRE",
+                "XEL",
+            }
         ),
     ),
     TopicDefinition(
@@ -144,6 +227,7 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\becb\b",
             )
         ),
+        tickers=frozenset({"IEF", "KRE", "SHY", "TLT", "XLF"}),
     ),
     TopicDefinition(
         name="Financials",
@@ -167,6 +251,33 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\bwells fargo\b",
             )
         ),
+        tickers=frozenset(
+            {
+                "AXP",
+                "BAC",
+                "BEN",
+                "BLK",
+                "BX",
+                "C",
+                "CFG",
+                "CME",
+                "COF",
+                "DFS",
+                "FIS",
+                "FISV",
+                "GS",
+                "ICE",
+                "JPM",
+                "KKR",
+                "MA",
+                "MS",
+                "PYPL",
+                "SCHW",
+                "USB",
+                "V",
+                "WFC",
+            }
+        ),
     ),
     TopicDefinition(
         name="Crypto",
@@ -182,6 +293,7 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\bblockchain\b",
             )
         ),
+        tickers=frozenset({"BTC", "BTC-USD", "COIN", "ETH", "ETH-USD", "ETHA", "GBTC", "HOOD", "IBIT", "MARA", "MSTR", "RIOT"}),
     ),
     TopicDefinition(
         name="Consumer",
@@ -196,6 +308,26 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\btravel\b",
                 r"\bairline(?:s)?\b",
             )
+        ),
+        tickers=frozenset(
+            {
+                "AAL",
+                "ABNB",
+                "AMZN",
+                "BKNG",
+                "CCL",
+                "COST",
+                "DAL",
+                "DIS",
+                "LOW",
+                "MCD",
+                "NKE",
+                "RCL",
+                "SBUX",
+                "TGT",
+                "UAL",
+                "WMT",
+            }
         ),
     ),
     TopicDefinition(
@@ -212,6 +344,27 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\bfda\b",
             )
         ),
+        tickers=frozenset(
+            {
+                "ABBV",
+                "ABT",
+                "AMGN",
+                "BMY",
+                "CI",
+                "GILD",
+                "HUM",
+                "ISRG",
+                "JNJ",
+                "LLY",
+                "MDT",
+                "MRK",
+                "NVO",
+                "PFE",
+                "REGN",
+                "TMO",
+                "UNH",
+            }
+        ),
     ),
     TopicDefinition(
         name="Industrials",
@@ -227,20 +380,49 @@ TOPIC_DEFINITIONS: tuple[TopicDefinition, ...] = (
                 r"\blogistics\b",
             )
         ),
+        tickers=frozenset(
+            {
+                "BA",
+                "CAT",
+                "CSX",
+                "DE",
+                "ETN",
+                "FDX",
+                "GD",
+                "GE",
+                "HON",
+                "LMT",
+                "MMM",
+                "NOC",
+                "NSC",
+                "PH",
+                "RTX",
+                "UNP",
+                "UPS",
+            }
+        ),
     ),
 )
 
 TOPIC_BY_NAME = {topic.name: topic for topic in TOPIC_DEFINITIONS}
 
 
-def classify_topics(agent: str | None, headlines: Iterable[str], insights: Iterable[str]) -> list[str]:
+def classify_topics(
+    agent: str | None,
+    headlines: Iterable[str],
+    insights: Iterable[str],
+    tickers: Iterable[str] = (),
+) -> list[str]:
     haystack = "\n".join(part for part in [agent or "", *headlines, *insights] if part).strip()
-    if not haystack:
+    normalized_tickers = {ticker.strip().upper() for ticker in tickers if ticker and ticker.strip()}
+    if not haystack and not normalized_tickers:
         return []
 
     matched: list[str] = []
     for topic in TOPIC_DEFINITIONS:
-        if any(pattern.search(haystack) for pattern in topic.patterns):
+        text_match = bool(haystack) and any(pattern.search(haystack) for pattern in topic.patterns)
+        ticker_match = bool(topic.tickers.intersection(normalized_tickers))
+        if text_match or ticker_match:
             matched.append(topic.name)
     return matched
 

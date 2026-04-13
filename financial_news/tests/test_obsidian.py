@@ -25,6 +25,7 @@ def make_record(
     row_id: int,
     attachment: Path | None = None,
     categories: list[str] | None = None,
+    tickers: list[str] | None = None,
 ) -> SummaryRecord:
     return SummaryRecord(
         row_id=row_id,
@@ -34,6 +35,7 @@ def make_record(
         headlines=["European stocks close higher"],
         insights=["Investors rotated back into cyclicals."],
         attachments=[attachment] if attachment else [],
+        tickers=tickers or ["MSFT", "NVDA"],
         categories=categories or ["Rates/Fed", "Financials"],
         raw_content={"ok": True},
     )
@@ -99,6 +101,7 @@ def test_render_summary_block_uses_targeted_links_and_obsidian_embed_syntax(tmp_
     assert "#topic/financials" in block
     assert "[[Sources/Agent BBC Business|Agent BBC Business]]" in block
     assert "[[Categories/rates-fed|Rates/Fed]]" in block
+    assert "- Tickers: `MSFT`, `NVDA`" in block
     assert "![[attachments/2026-03-30/chart.png]]" in block
 
 

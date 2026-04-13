@@ -312,6 +312,8 @@ def render_summary_block(output_root: Path, record: SummaryRecord, attachments: 
     ]
     if record.agent:
         lines.append(f"- Agent: `{record.agent}`\n")
+    if record.tickers:
+        lines.append(f"- Tickers: {', '.join(f'`{ticker}`' for ticker in record.tickers)}\n")
     if category_links:
         lines.append(f"- Topics (heuristic): {', '.join(category_links)}\n")
 

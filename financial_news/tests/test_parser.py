@@ -28,6 +28,12 @@ def test_parse_summary_record_extracts_nested_fields_dedupes_and_classifies_topi
                 "Risk appetite improved through the session.",
                 {"summary": "Fed pause odds are rising."},
             ],
+            "tickers": [
+                "TLT",
+                {"symbol": "JPM"},
+                {"value": "NVDA"},
+                "TLT",
+            ],
             "attachments": [
                 "/tmp/chart-one.png",
                 "./captures/chart-two.png",
@@ -51,7 +57,8 @@ def test_parse_summary_record_extracts_nested_fields_dedupes_and_classifies_topi
         "Risk appetite improved through the session.",
     ]
     assert record.attachments == [Path("/tmp/chart-one.png"), Path("./captures/chart-two.png")]
-    assert record.categories == ["Energy", "Rates/Fed"]
+    assert record.tickers == ["TLT", "JPM", "NVDA"]
+    assert record.categories == ["Energy", "AI", "Tech", "Rates/Fed", "Financials"]
 
 
 def test_parse_summary_record_uses_fallback_agent_and_row_timestamp_when_needed() -> None:
@@ -70,4 +77,33 @@ def test_parse_summary_record_uses_fallback_agent_and_row_timestamp_when_needed(
     assert record.headlines == []
     assert record.insights == ["Markets were mixed into the close."]
     assert record.attachments == []
+    assert record.tickers == []
     assert record.categories == []
+
+
+def test_parse_summary_record_extracts_tickers_from_common_nested_symbol_fields() -> None:
+    row_timestamp = datetime(2026, 3, 30, 11, 30, tzinfo=timezone.utc)
+    content = {
+        "assistant": "Agent Benzinga",
+        "payload": {
+            "items": [
+                {
+                    "title": "Chipmakers climb",
+                    "symbols": "NVDA, AMD; AVGO",
+                },
+                {
+                    "headline": "Utilities catch a bid",
+                    "security": {"symbol": "NEE", "exchange": "NYSE"},
+                },
+                {
+                    "summary": "Crypto proxies rally with bitcoin.",
+                    "mentioned_tickers": ["COIN", {"ticker": "MSTR"}],
+                },
+            ]
+        },
+    }
+
+    record = parse_summary_record(row_id=9, row_timestamp=row_timestamp, content=content)
+
+    assert record.tickers == ["NVDA", "AMD", "AVGO", "NEE", "COIN", "MSTR"]
+    assert record.categories == ["AI", "Tech", "Utilities", "Crypto"]
