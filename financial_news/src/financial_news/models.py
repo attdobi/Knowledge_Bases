@@ -15,6 +15,8 @@ class SummaryRecord:
     headlines: list[str] = field(default_factory=list)
     insights: list[str] = field(default_factory=list)
     attachments: list[Path] = field(default_factory=list)
+    tickers: list[str] = field(default_factory=list)
+    categories: list[str] = field(default_factory=list)
     raw_content: dict[str, Any] | list[Any] | str | None = None
 
     @property
