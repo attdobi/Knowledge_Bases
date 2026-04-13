@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 import financial_news.ingest as ingest
 from financial_news.models import SummaryRecord, TableSchema
 
@@ -122,6 +124,41 @@ def test_main_uses_saved_state_and_skips_writes_during_dry_run(tmp_path: Path, m
     assert seen == {"since_id": 88}
     assert json.loads(state_path.read_text(encoding="utf-8")) == {"last_processed_id": 88}
     assert not summary_path_exists(output_root)
+
+
+def test_main_checkpoints_each_successful_record_before_failure(tmp_path: Path, monkeypatch) -> None:
+    output_root = tmp_path / "vault"
+    state_path = tmp_path / "state" / "ingest_state.json"
+    written_row_ids: list[int] = []
+    records = [make_record(101), make_record(102)]
+
+    monkeypatch.setattr(ingest, "connect", lambda dsn: DummyConnection())
+    monkeypatch.setattr(ingest, "discover_schema", lambda conn: make_schema())
+    monkeypatch.setattr(ingest, "fetch_summaries", lambda conn, schema, since_id=None, limit=None: records)
+
+    def fake_append_summary(output_root: Path, record: SummaryRecord) -> Path:
+        if record.row_id == 102:
+            raise RuntimeError("disk full")
+        written_row_ids.append(record.row_id)
+        destination = output_root / f"{record.row_id}.md"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(f"row {record.row_id}", encoding="utf-8")
+        return destination
+
+    monkeypatch.setattr(ingest, "append_summary", fake_append_summary)
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        ingest.main(
+            [
+                "--output-root",
+                str(output_root),
+                "--state-path",
+                str(state_path),
+            ]
+        )
+
+    assert written_row_ids == [101]
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {"last_processed_id": 101}
 
 
 def summary_path_exists(output_root: Path) -> bool:
