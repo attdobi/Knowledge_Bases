@@ -113,6 +113,30 @@ def test_build_graph_artifacts_computes_expected_metrics(tmp_path: Path) -> None
     assert artifacts.summary["top_nodes"]["weighted_degree"][0]["label"] == "AI"
 
 
+def test_build_graph_artifacts_generates_self_contained_html_dashboard(tmp_path: Path) -> None:
+    make_vault(tmp_path)
+
+    artifacts = build_fixture_artifacts(tmp_path)
+    html_dashboard = artifacts.dashboard_html
+
+    assert "<!doctype html>" in html_dashboard
+    assert "Graph Metrics Dashboard" in html_dashboard
+    assert "<script id=\"graph-data\" type=\"application/json\">" in html_dashboard
+    assert "nodes.csv" in html_dashboard
+    assert "edges.csv" in html_dashboard
+    assert "python -m http.server" in html_dashboard
+
+    graph_data = html_dashboard.split(
+        "<script id=\"graph-data\" type=\"application/json\">", 1
+    )[1].split("</script>", 1)[0]
+    payload = json.loads(graph_data)
+
+    assert payload["summary"]["classified_block_count"] == 3
+    assert payload["top_n"] == 10
+    assert {node["node_id"] for node in payload["nodes"]} >= {"source:CNBC", "ticker:NVDA", "theme:AI"}
+    assert {edge["source_id"] for edge in payload["edges"]} >= {"source:CNBC", "theme:AI"}
+
+
 def test_main_writes_graph_metric_outputs_and_dashboard(tmp_path: Path) -> None:
     make_vault(tmp_path)
     organizer_dir = tmp_path / "Organizer"
@@ -137,6 +161,7 @@ def test_main_writes_graph_metric_outputs_and_dashboard(tmp_path: Path) -> None:
     assert (output_dir / "edges.csv").exists()
     assert (output_dir / "summary.json").exists()
     assert (output_dir / "dashboard.md").exists()
+    assert (output_dir / "dashboard.html").exists()
 
     with (output_dir / "nodes.csv").open("r", encoding="utf-8", newline="") as handle:
         node_rows = {row["node_id"]: row for row in csv.DictReader(handle)}
@@ -148,6 +173,7 @@ def test_main_writes_graph_metric_outputs_and_dashboard(tmp_path: Path) -> None:
 
     summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
     dashboard = (output_dir / "dashboard.md").read_text(encoding="utf-8")
+    dashboard_html = (output_dir / "dashboard.html").read_text(encoding="utf-8")
 
     assert node_rows["ticker:NVDA"]["note_path"] == "Tickers/NVDA"
     assert node_rows["ticker:NVDA"]["weighted_degree"] == "8"
@@ -169,6 +195,13 @@ def test_main_writes_graph_metric_outputs_and_dashboard(tmp_path: Path) -> None:
     assert "Recent: 30d" in dashboard
     assert "Graph built only from organizer blocks with `status == classified`." in dashboard
     assert "Metrics come from the structured organizer report, not a vault-wide scrape." in dashboard
+
+    assert "Graph Metrics Dashboard" in dashboard_html
+    assert "Network overview" in dashboard_html
+    assert "<script id=\"graph-data\" type=\"application/json\">" in dashboard_html
+    assert "source:CNBC" in dashboard_html
+    assert "ticker:NVDA" in dashboard_html
+    assert "summary.json" in dashboard_html
 
 
 def test_normalize_source_label_variants() -> None:

@@ -163,12 +163,21 @@ Default behavior:
 
 - reads `Organizer/organizer-report-latest.json`
 - writes `Organizer/graph-metrics/`
-- emits `nodes.csv`, `edges.csv`, `summary.json`, and `dashboard.md`
+- emits `nodes.csv`, `edges.csv`, `summary.json`, `dashboard.md`, and `dashboard.html`
 - computes degree / weighted-degree metrics, two-hop reach, and PageRank
+- writes `dashboard.html` as a self-contained browser view with metric cards, bar charts, source coverage, and an SVG network overview
 
 Why this input source: the graph intentionally uses the organizer's classified source/ticker/theme blocks as a curated layer. That keeps the metrics tied to reviewed organizer structure instead of letting noisy vault-wide links or generic note backlinks dominate the graph.
 
-The summary and dashboard include recent-window snapshots (7d and 30d) anchored at the latest classified date in the organizer report. These provide a quick view of recent activity without requiring a separate filtered run. Source names are normalized across common naming variants (agent/source/src prefixes, underscores, dashes, and abbreviation dots like "B.B.C.").
+The summary and dashboards include recent-window snapshots (7d and 30d) anchored at the latest classified date in the organizer report. These provide a quick view of recent activity without requiring a separate filtered run. Source names are normalized across common naming variants (agent/source/src prefixes, underscores, dashes, and abbreviation dots like "B.B.C.").
+
+To view the HTML dashboard, open `Organizer/graph-metrics/dashboard.html` directly or serve the vault root:
+
+```bash
+python -m http.server
+```
+
+Then browse to `http://localhost:8000/Organizer/graph-metrics/dashboard.html`.
 
 Example override:
 

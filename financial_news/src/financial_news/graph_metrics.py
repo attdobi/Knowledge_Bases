@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html as html_lib
 import json
 import logging
 import math
@@ -81,6 +82,7 @@ class GraphArtifacts:
     edge_rows: list[dict[str, Any]]
     summary: dict[str, Any]
     dashboard: str
+    dashboard_html: str
 
 
 class NoteIndex:
@@ -356,11 +358,19 @@ def build_graph_artifacts(
         top_n=top_n,
         source_coverage=source_coverage,
     )
+    dashboard_html = build_dashboard_html(
+        input_path=input_path,
+        node_rows=node_rows,
+        edge_rows=edge_rows,
+        summary=summary,
+        top_n=top_n,
+    )
     return GraphArtifacts(
         node_rows=node_rows,
         edge_rows=edge_rows,
         summary=summary,
         dashboard=dashboard,
+        dashboard_html=dashboard_html,
     )
 
 
@@ -875,6 +885,546 @@ def build_dashboard(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def build_dashboard_html(
+    *,
+    input_path: Path,
+    node_rows: list[NodeRow],
+    edge_rows: list[dict[str, Any]],
+    summary: dict[str, Any],
+    top_n: int,
+) -> str:
+    """Build a self-contained browser dashboard with embedded graph data.
+
+    The output intentionally uses only HTML/CSS/SVG/vanilla JavaScript so it can be
+    opened directly from disk or served with ``python -m http.server``.
+    """
+    date_range = summary.get("date_range", {})
+    date_range_text = (
+        f"{date_range.get('start')} → {date_range.get('end')}"
+        if date_range.get("start") and date_range.get("end")
+        else "n/a"
+    )
+    dashboard_data = {
+        "input_path": input_path.as_posix(),
+        "summary": summary,
+        "nodes": [node_row_to_dict(row) for row in node_rows],
+        "edges": edge_rows,
+        "top_n": top_n,
+    }
+    graph_data_json = json.dumps(
+        dashboard_data,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).replace("</", "<\\/")
+
+    static_recent = render_recent_windows_html(summary)
+    template = """<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>Financial News Graph Metrics</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #172033;
+      --border: #263244;
+      --muted: #94a3b8;
+      --text: #e5e7eb;
+      --accent: #38bdf8;
+      --source: #38bdf8;
+      --ticker: #a78bfa;
+      --theme: #34d399;
+      --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #1e3a5f 0, var(--bg) 34rem);
+      color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;
+    }
+    a { color: #7dd3fc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .shell { max-width: 1280px; margin: 0 auto; padding: 28px; }
+    header { margin-bottom: 22px; }
+    h1 { margin: 0 0 6px; font-size: clamp(28px, 5vw, 48px); letter-spacing: -0.04em; }
+    h2 { margin: 0 0 14px; font-size: 20px; letter-spacing: -0.02em; }
+    h3 { margin: 0 0 10px; font-size: 15px; color: #cbd5e1; }
+    .subtitle { margin: 0; color: var(--muted); }
+    .grid { display: grid; gap: 16px; }
+    .cards { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 20px 0; }
+    .card, section {
+      background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.24);
+    }
+    .card { padding: 16px; }
+    .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .card .value { margin-top: 8px; font-size: 28px; font-weight: 750; letter-spacing: -0.03em; }
+    section { padding: 18px; min-width: 0; }
+    .two-col { grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); align-items: start; }
+    .three-col { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); margin-top: 12px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px; color: #cbd5e1; background: rgba(15,23,42,0.48); }
+    .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+    .bar-row { display: grid; grid-template-columns: minmax(105px, 0.95fr) minmax(150px, 2fr) 70px; gap: 10px; align-items: center; margin: 8px 0; }
+    .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { height: 12px; border-radius: 999px; background: rgba(148,163,184,0.16); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: inherit; min-width: 2px; background: linear-gradient(90deg, var(--accent), #818cf8); }
+    .bar-value { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 9px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .table-wrap { overflow-x: auto; }
+    #network { width: 100%; min-height: 520px; border-radius: 14px; background: rgba(15,23,42,0.58); border: 1px solid var(--border); }
+    .network-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+    .type-source { color: var(--source); }
+    .type-ticker { color: var(--ticker); }
+    .type-theme { color: var(--theme); }
+    .recent-list { display: grid; gap: 10px; }
+    .recent-card { padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: rgba(15,23,42,0.35); }
+    .recent-card strong { color: #f8fafc; }
+    .small { color: var(--muted); font-size: 13px; }
+    .artifacts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    @media (max-width: 900px) { .shell { padding: 18px; } .two-col { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class=\"shell\">
+    <header>
+      <h1>Graph Metrics Dashboard</h1>
+      <p class=\"subtitle\">Browser-viewable financial_news source/ticker/theme graph metrics.</p>
+      <div class=\"meta\">
+        <span>Generated: __GENERATED__</span>
+        <span>Input: <code>__INPUT__</code></span>
+        <span>Date range: __DATE_RANGE__</span>
+      </div>
+      <div class=\"artifacts\">
+        <a class=\"pill\" href=\"nodes.csv\">nodes.csv</a>
+        <a class=\"pill\" href=\"edges.csv\">edges.csv</a>
+        <a class=\"pill\" href=\"summary.json\">summary.json</a>
+        <a class=\"pill\" href=\"dashboard.md\">dashboard.md</a>
+      </div>
+    </header>
+
+    <div class=\"grid cards\">
+      <div class=\"card\"><div class=\"label\">Classified blocks</div><div class=\"value\">__BLOCKS__</div></div>
+      <div class=\"card\"><div class=\"label\">Nodes</div><div class=\"value\">__NODES__</div></div>
+      <div class=\"card\"><div class=\"label\">Edges</div><div class=\"value\">__EDGES__</div></div>
+      <div class=\"card\"><div class=\"label\">Clusters</div><div class=\"value\">__CLUSTERS__</div></div>
+      <div class=\"card\"><div class=\"label\">Edge weight</div><div class=\"value\">__EDGE_WEIGHT__</div></div>
+    </div>
+
+    <div class=\"grid two-col\">
+      <section>
+        <h2>Network overview</h2>
+        <div id=\"network\"></div>
+        <p class=\"network-note\">Showing a focused subgraph from top weighted-degree, PageRank, and recent nodes. Circle size follows weighted degree; edge width follows co-mention weight.</p>
+      </section>
+      <section>
+        <h2>Node mix</h2>
+        <p class=\"small\">__NODE_TYPES__</p>
+        <div id=\"type-bars\"></div>
+        <h2 style=\"margin-top:22px\">Recent windows</h2>
+        <div id=\"recent-windows\" class=\"recent-list\">__RECENT_WINDOWS_STATIC__</div>
+      </section>
+    </div>
+
+    <div class=\"grid three-col\" style=\"margin-top:16px\">
+      <section><h2>Top PageRank</h2><div id=\"pagerank-bars\"></div></section>
+      <section><h2>Top weighted degree</h2><div id=\"degree-bars\"></div></section>
+      <section><h2>Top recency</h2><div id=\"recency-bars\"></div></section>
+    </div>
+
+    <section style=\"margin-top:16px\">
+      <h2>Top nodes table</h2>
+      <div class=\"table-wrap\"><table id=\"top-table\"></table></div>
+    </section>
+
+    <section style=\"margin-top:16px\">
+      <h2>Source coverage</h2>
+      <div class=\"table-wrap\"><table id=\"source-table\"></table></div>
+    </section>
+
+    <section style=\"margin-top:16px\">
+      <h2>Method notes</h2>
+      <ul class=\"small\">
+        <li>Graph built only from organizer blocks with <code>status == classified</code>.</li>
+        <li>Edges are directed and weighted: source→ticker, source→theme, plus ticker↔theme co-mentions.</li>
+        <li>Metrics come from the structured organizer report, not a vault-wide scrape.</li>
+        <li>Open this file directly, or serve the vault root with <code>python -m http.server</code> and browse to <code>Organizer/graph-metrics/dashboard.html</code>.</li>
+      </ul>
+    </section>
+  </div>
+
+  <script id=\"graph-data\" type=\"application/json\">__GRAPH_DATA__</script>
+  <script>
+    (() => {
+      const data = JSON.parse(document.getElementById('graph-data').textContent);
+      const nodes = data.nodes || [];
+      const edges = data.edges || [];
+      const summary = data.summary || {};
+      const topN = Math.max(1, data.top_n || 15);
+      const typeColors = { source: '#38bdf8', ticker: '#a78bfa', theme: '#34d399' };
+
+      const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 });
+      const metricValue = (node, metric) => Number(node[metric] || 0);
+      const byMetric = (metric) => nodes.slice().sort((a, b) => metricValue(b, metric) - metricValue(a, metric) || a.node_id.localeCompare(b.node_id));
+      const topNodes = (metric, limit = topN) => byMetric(metric).slice(0, limit);
+      const maxOf = (items, metric) => Math.max(1e-12, ...items.map((node) => metricValue(node, metric)));
+
+      function clear(element) { while (element.firstChild) element.removeChild(element.firstChild); }
+      function appendText(parent, text) { parent.appendChild(document.createTextNode(text)); }
+      function nodeHref(node) { return node.note_path ? '../../' + encodeURI(node.note_path + '.md') : null; }
+      function nodeLabel(node) { return `${node.label} (${node.node_type})`; }
+      function nodeLink(node) {
+        const href = nodeHref(node);
+        if (!href) return document.createTextNode(node.label);
+        const link = document.createElement('a');
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = node.label;
+        return link;
+      }
+
+      function renderBars(containerId, metric, formatter = (value) => fmt.format(value)) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        clear(container);
+        const items = topNodes(metric);
+        const maxValue = maxOf(items, metric);
+        for (const node of items) {
+          const row = document.createElement('div');
+          row.className = 'bar-row';
+          const label = document.createElement('div');
+          label.className = `bar-label type-${node.node_type}`;
+          label.title = nodeLabel(node);
+          label.appendChild(nodeLink(node));
+          const track = document.createElement('div');
+          track.className = 'bar-track';
+          const fill = document.createElement('div');
+          fill.className = 'bar-fill';
+          fill.style.background = `linear-gradient(90deg, ${typeColors[node.node_type] || '#38bdf8'}, #818cf8)`;
+          fill.style.width = `${Math.max(2, metricValue(node, metric) / maxValue * 100)}%`;
+          track.appendChild(fill);
+          const value = document.createElement('div');
+          value.className = 'bar-value';
+          value.textContent = formatter(metricValue(node, metric));
+          row.append(label, track, value);
+          container.appendChild(row);
+        }
+      }
+
+      function renderTypeBars() {
+        const container = document.getElementById('type-bars');
+        if (!container) return;
+        clear(container);
+        const counts = summary.node_counts_by_type || {};
+        const maxValue = Math.max(1, ...Object.values(counts));
+        for (const type of Object.keys(counts).sort()) {
+          const row = document.createElement('div');
+          row.className = 'bar-row';
+          const label = document.createElement('div');
+          label.className = `bar-label type-${type}`;
+          label.innerHTML = `<span class=\"dot\" style=\"background:${typeColors[type] || '#94a3b8'}\"></span> ${type}`;
+          const track = document.createElement('div');
+          track.className = 'bar-track';
+          const fill = document.createElement('div');
+          fill.className = 'bar-fill';
+          fill.style.background = typeColors[type] || '#94a3b8';
+          fill.style.width = `${Math.max(2, counts[type] / maxValue * 100)}%`;
+          track.appendChild(fill);
+          const value = document.createElement('div');
+          value.className = 'bar-value';
+          value.textContent = fmt.format(counts[type]);
+          row.append(label, track, value);
+          container.appendChild(row);
+        }
+      }
+
+      function renderTopTable() {
+        const table = document.getElementById('top-table');
+        if (!table) return;
+        clear(table);
+        const thead = table.createTHead();
+        const head = thead.insertRow();
+        ['Rank', 'Node', 'Type', 'PageRank', 'Weighted degree', 'Two-hop reach', 'Blocks', 'Recent', 'Cluster'].forEach((name, index) => {
+          const th = document.createElement('th');
+          th.textContent = name;
+          if (index > 2) th.className = 'num';
+          head.appendChild(th);
+        });
+        const tbody = table.createTBody();
+        topNodes('weighted_degree', topN).forEach((node, index) => {
+          const row = tbody.insertRow();
+          const values = [index + 1, null, node.node_type, node.pagerank.toFixed(6), node.weighted_degree, node.two_hop_reach, node.block_count, node.recent_block_count, node.cluster_id];
+          values.forEach((value, cellIndex) => {
+            const cell = row.insertCell();
+            if (cellIndex === 1) cell.appendChild(nodeLink(node));
+            else cell.textContent = value;
+            if (cellIndex > 2 || cellIndex === 0) cell.className = 'num';
+          });
+        });
+      }
+
+      function renderSourceTable() {
+        const table = document.getElementById('source-table');
+        if (!table) return;
+        clear(table);
+        const coverage = summary.source_coverage || {};
+        const rows = Object.entries(coverage).sort((a, b) => b[1].blocks - a[1].blocks || a[0].localeCompare(b[0]));
+        const thead = table.createTHead();
+        const head = thead.insertRow();
+        ['Source', 'Blocks', 'Recent', 'Tickers', 'Themes'].forEach((name, index) => {
+          const th = document.createElement('th');
+          th.textContent = name;
+          if (index > 0) th.className = 'num';
+          head.appendChild(th);
+        });
+        const tbody = table.createTBody();
+        for (const [name, stats] of rows) {
+          const row = tbody.insertRow();
+          [name, stats.blocks, stats.recent_blocks, (stats.tickers || []).length, (stats.themes || []).length].forEach((value, index) => {
+            const cell = row.insertCell();
+            cell.textContent = value;
+            if (index > 0) cell.className = 'num';
+          });
+        }
+      }
+
+      function renderRecentWindows() {
+        const container = document.getElementById('recent-windows');
+        if (!container || container.dataset.rendered === '1') return;
+        clear(container);
+        for (const window of summary.recent_windows || []) {
+          const card = document.createElement('div');
+          card.className = 'recent-card';
+          const title = document.createElement('strong');
+          title.textContent = `${window.window_days}d: ${window.cutoff_date} → ${window.anchor_date}`;
+          const counts = document.createElement('div');
+          counts.className = 'small';
+          counts.textContent = `Blocks ${window.block_count} · Sources ${window.unique_sources} · Tickers ${window.unique_tickers} · Themes ${window.unique_themes}`;
+          const tickers = document.createElement('div');
+          tickers.className = 'small';
+          tickers.textContent = `Top tickers: ${(window.top_tickers || []).slice(0, 5).map((item) => `${item.label} (${item.mentions})`).join(', ') || 'n/a'}`;
+          const themes = document.createElement('div');
+          themes.className = 'small';
+          themes.textContent = `Top themes: ${(window.top_themes || []).slice(0, 5).map((item) => `${item.label} (${item.mentions})`).join(', ') || 'n/a'}`;
+          card.append(title, counts, tickers, themes);
+          container.appendChild(card);
+        }
+        container.dataset.rendered = '1';
+      }
+
+      function drawNetwork() {
+        const container = document.getElementById('network');
+        if (!container) return;
+        clear(container);
+        const selected = [];
+        const seen = new Set();
+        const add = (items) => {
+          for (const node of items) {
+            if (selected.length >= 48) return;
+            if (!seen.has(node.node_id)) {
+              seen.add(node.node_id);
+              selected.push(node);
+            }
+          }
+        };
+        add(topNodes('weighted_degree', 28));
+        add(topNodes('pagerank', 14));
+        add(topNodes('recency_score', 10));
+        const selectedIds = new Set(selected.map((node) => node.node_id));
+        const nodeById = new Map(selected.map((node) => [node.node_id, node]));
+        const graphEdges = edges
+          .filter((edge) => selectedIds.has(edge.source_id) && selectedIds.has(edge.target_id))
+          .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))
+          .slice(0, 140);
+        const width = 960;
+        const height = 560;
+        const cx = width / 2;
+        const cy = height / 2;
+        const radius = Math.min(width, height) * 0.38;
+        const maxDegree = Math.max(1, ...selected.map((node) => Number(node.weighted_degree || 0)));
+        const maxWeight = Math.max(1, ...graphEdges.map((edge) => Number(edge.weight || 0)));
+        const positions = new Map();
+        selected.forEach((node, index) => {
+          const angle = -Math.PI / 2 + (index / Math.max(1, selected.length)) * Math.PI * 2;
+          const clusterOffset = ((Number(node.cluster_id || 0) % 5) - 2) * 16;
+          positions.set(node.node_id, {
+            x: cx + Math.cos(angle) * (radius + clusterOffset),
+            y: cy + Math.sin(angle) * (radius + clusterOffset),
+          });
+        });
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.setAttribute('role', 'img');
+        svg.setAttribute('aria-label', 'Financial news graph network visualization');
+        svg.style.width = '100%';
+        svg.style.height = '520px';
+
+        for (const edge of graphEdges) {
+          const source = positions.get(edge.source_id);
+          const target = positions.get(edge.target_id);
+          if (!source || !target) continue;
+          const line = document.createElementNS(svg.namespaceURI, 'line');
+          line.setAttribute('x1', source.x);
+          line.setAttribute('y1', source.y);
+          line.setAttribute('x2', target.x);
+          line.setAttribute('y2', target.y);
+          line.setAttribute('stroke', '#64748b');
+          line.setAttribute('stroke-opacity', '0.34');
+          line.setAttribute('stroke-width', String(0.8 + Number(edge.weight || 0) / maxWeight * 4.2));
+          const title = document.createElementNS(svg.namespaceURI, 'title');
+          title.textContent = `${edge.source_id} → ${edge.target_id}: ${edge.weight}`;
+          line.appendChild(title);
+          svg.appendChild(line);
+        }
+
+        for (const node of selected) {
+          const pos = positions.get(node.node_id);
+          if (!pos) continue;
+          const group = document.createElementNS(svg.namespaceURI, 'g');
+          const circle = document.createElementNS(svg.namespaceURI, 'circle');
+          const size = 7 + Math.sqrt(Number(node.weighted_degree || 0) / maxDegree) * 17;
+          circle.setAttribute('cx', pos.x);
+          circle.setAttribute('cy', pos.y);
+          circle.setAttribute('r', String(size));
+          circle.setAttribute('fill', typeColors[node.node_type] || '#94a3b8');
+          circle.setAttribute('fill-opacity', '0.86');
+          circle.setAttribute('stroke', '#e2e8f0');
+          circle.setAttribute('stroke-opacity', '0.72');
+          circle.setAttribute('stroke-width', '1.2');
+          const title = document.createElementNS(svg.namespaceURI, 'title');
+          title.textContent = `${node.node_id}\nweighted degree: ${node.weighted_degree}\nPageRank: ${Number(node.pagerank || 0).toFixed(6)}\ncluster: ${node.cluster_id}`;
+          circle.appendChild(title);
+          group.appendChild(circle);
+          if (size >= 12 || selected.length <= 34) {
+            const label = document.createElementNS(svg.namespaceURI, 'text');
+            label.setAttribute('x', pos.x + size + 4);
+            label.setAttribute('y', pos.y + 4);
+            label.setAttribute('fill', '#e5e7eb');
+            label.setAttribute('font-size', '11');
+            label.setAttribute('paint-order', 'stroke');
+            label.setAttribute('stroke', '#0f172a');
+            label.setAttribute('stroke-width', '3');
+            label.textContent = node.label.length > 18 ? `${node.label.slice(0, 17)}…` : node.label;
+            group.appendChild(label);
+          }
+          svg.appendChild(group);
+        }
+
+        container.appendChild(svg);
+      }
+
+      renderTypeBars();
+      renderRecentWindows();
+      renderBars('pagerank-bars', 'pagerank', (value) => value.toFixed(6));
+      renderBars('degree-bars', 'weighted_degree', (value) => fmt.format(value));
+      renderBars('recency-bars', 'recency_score', (value) => value.toFixed(4));
+      renderTopTable();
+      renderSourceTable();
+      drawNetwork();
+    })();
+  </script>
+</body>
+</html>
+"""
+    replacements = {
+        "__GENERATED__": html_lib.escape(str(summary.get("generated_at", ""))),
+        "__INPUT__": html_lib.escape(input_path.as_posix()),
+        "__DATE_RANGE__": html_lib.escape(date_range_text),
+        "__BLOCKS__": html_lib.escape(str(summary.get("classified_block_count", 0))),
+        "__NODES__": html_lib.escape(str(summary.get("node_count", 0))),
+        "__EDGES__": html_lib.escape(str(summary.get("edge_count", 0))),
+        "__CLUSTERS__": html_lib.escape(str(summary.get("cluster_count", 0))),
+        "__EDGE_WEIGHT__": html_lib.escape(str(summary.get("total_edge_weight", 0))),
+        "__NODE_TYPES__": html_lib.escape(format_type_counts(summary.get("node_counts_by_type", {}))),
+        "__RECENT_WINDOWS_STATIC__": static_recent,
+        "__GRAPH_DATA__": graph_data_json,
+    }
+    for placeholder, value in replacements.items():
+        template = template.replace(placeholder, value)
+    return template
+
+
+def node_row_to_dict(row: NodeRow) -> dict[str, Any]:
+    return {
+        "node_id": row.node_id,
+        "node_type": row.node_type,
+        "label": row.label,
+        "note_path": row.note_path,
+        "unique_neighbors": row.unique_neighbors,
+        "degree": row.degree,
+        "in_degree": row.in_degree,
+        "out_degree": row.out_degree,
+        "weighted_in_degree": row.weighted_in_degree,
+        "weighted_out_degree": row.weighted_out_degree,
+        "weighted_degree": row.weighted_degree,
+        "two_hop_reach": row.two_hop_reach,
+        "pagerank": row.pagerank,
+        "mention_count": row.mention_count,
+        "block_count": row.block_count,
+        "cluster_id": row.cluster_id,
+        "recent_block_count": row.recent_block_count,
+        "recency_score": row.recency_score,
+    }
+
+
+def render_recent_windows_html(summary: dict[str, Any]) -> str:
+    windows = summary.get("recent_windows", [])
+    if not windows:
+        return '<p class="small">No recent-window data available.</p>'
+    cards: list[str] = []
+    for window in windows:
+        top_tickers = ", ".join(
+            f"{html_lib.escape(str(item.get('label', '')))} ({html_lib.escape(str(item.get('mentions', 0)))})"
+            for item in window.get("top_tickers", [])[:5]
+        ) or "n/a"
+        top_themes = ", ".join(
+            f"{html_lib.escape(str(item.get('label', '')))} ({html_lib.escape(str(item.get('mentions', 0)))})"
+            for item in window.get("top_themes", [])[:5]
+        ) or "n/a"
+        cards.append(
+            "".join(
+                [
+                    '<div class="recent-card">',
+                    "<strong>",
+                    html_lib.escape(str(window.get("window_days", ""))),
+                    "d: ",
+                    html_lib.escape(str(window.get("cutoff_date", ""))),
+                    " → ",
+                    html_lib.escape(str(window.get("anchor_date", ""))),
+                    "</strong>",
+                    '<div class="small">Blocks ',
+                    html_lib.escape(str(window.get("block_count", 0))),
+                    " · Sources ",
+                    html_lib.escape(str(window.get("unique_sources", 0))),
+                    " · Tickers ",
+                    html_lib.escape(str(window.get("unique_tickers", 0))),
+                    " · Themes ",
+                    html_lib.escape(str(window.get("unique_themes", 0))),
+                    "</div>",
+                    '<div class="small">Top tickers: ',
+                    top_tickers,
+                    "</div>",
+                    '<div class="small">Top themes: ',
+                    top_themes,
+                    "</div>",
+                    "</div>",
+                ]
+            )
+        )
+    return "\n".join(cards)
+
+
 def render_leaderboard(
     *,
     node_rows: list[NodeRow],
@@ -993,6 +1543,7 @@ def write_artifacts(output_dir: Path, artifacts: GraphArtifacts) -> None:
     write_edges_csv(output_dir / "edges.csv", artifacts.edge_rows)
     (output_dir / "summary.json").write_text(json.dumps(artifacts.summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output_dir / "dashboard.md").write_text(artifacts.dashboard, encoding="utf-8")
+    (output_dir / "dashboard.html").write_text(artifacts.dashboard_html, encoding="utf-8")
 
 
 def write_nodes_csv(path: Path, node_rows: list[NodeRow]) -> None:

@@ -20,6 +20,29 @@ dist/
 *.egg-info/
 .mypy_cache/
 .ruff_cache/
+uv.lock
+
+# Generated Obsidian vault indexes and graph/report outputs
+Graph Help.md
+Tickers/
+Months/
+Weeks/
+Organizer/
+
+# Generated source pages; preserve curated operator profiles already tracked
+Sources/*.md
+!Sources/AP Business.md
+!Sources/BBC Business.md
+!Sources/Benzinga.md
+!Sources/CNBC.md
+!Sources/Fox Business.md
+!Sources/Home.md
+!Sources/Yahoo Finance.md
+
+# Generated theme pages; preserve curated home/seed pages already tracked
+Themes/*.md
+!Themes/Home.md
+!Themes/2026-W14.md
 
 # Secrets / private local files
 .env

@@ -18,3 +18,6 @@ dist/
 .state/
 financial_news/attachments/
 financial_news/20[0-9][0-9]-[0-1][0-9]/
+
+# Generated financial_news scratch/test vault
+financial_news_test/

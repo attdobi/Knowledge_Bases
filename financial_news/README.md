@@ -183,8 +183,15 @@ Artifacts:
 - `edges.csv` — directed weighted edges across source→ticker, source→theme, and ticker↔theme links
 - `summary.json` — run metadata, counts, date range, and top-node summaries
 - `dashboard.md` — an operator-friendly leaderboard view for Obsidian / markdown review
+- `dashboard.html` — a self-contained browser dashboard with metric cards, bar charts, source coverage, and an SVG network overview
 
 Metrics include unique neighbors / degree, in/out degree, weighted in/out degree, weighted degree, two-hop reach, and PageRank.
+
+Open the HTML directly from disk, or serve the vault root and browse to `Organizer/graph-metrics/dashboard.html`:
+
+```bash
+python -m http.server
+```
 
 The summary and dashboard also include recent-window snapshots (7d and 30d by default) anchored at the latest classified date, showing block/source/ticker/theme counts and top mentions per window. Source names are normalized across common variants (agent/source prefixes, underscores, dashes, abbreviation dots).
 
