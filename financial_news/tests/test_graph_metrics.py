@@ -71,6 +71,37 @@ def test_build_graph_artifacts_uses_classified_blocks_only(tmp_path: Path) -> No
     assert artifacts.summary["recent_windows"][0]["window_days"] == 7
     assert artifacts.summary["recent_windows"][1]["window_days"] == 30
 
+    weekly_graph = artifacts.summary["weekly_graph"]
+    assert weekly_graph["bucket_count"] == 1
+    assert weekly_graph["undated_block_count"] == 0
+
+    bucket = weekly_graph["buckets"][0]
+    assert bucket["key"] == "2026-W15"
+    assert bucket["label"] == "2026-W15"
+    assert bucket["start_date"] == "2026-04-06"
+    assert bucket["end_date"] == "2026-04-12"
+    assert bucket["block_count"] == 3
+    assert bucket["unique_sources"] == 2
+    assert bucket["unique_tickers"] == 3
+    assert bucket["unique_themes"] == 2
+    assert bucket["node_counts_by_type"] == {"source": 2, "theme": 2, "ticker": 3}
+
+    weekly_nodes = {node["node_id"]: node for node in bucket["nodes"]}
+    weekly_edges = {
+        (edge["source_id"], edge["target_id"]): edge["weight"]
+        for edge in bucket["edges"]
+    }
+    assert weekly_nodes["source:CNBC"] == {
+        "node_id": "source:CNBC",
+        "node_type": "source",
+        "count": 2,
+    }
+    assert weekly_nodes["theme:Technology"]["count"] == 2
+    assert weekly_nodes["ticker:NVDA"]["count"] == 2
+    assert weekly_edges[("source:CNBC", "ticker:NVDA")] == 2
+    assert weekly_edges[("source:CNBC", "theme:AI")] == 2
+    assert weekly_edges[("source:Yahoo Finance", "ticker:AAPL")] == 1
+
 
 def test_build_graph_artifacts_computes_expected_metrics(tmp_path: Path) -> None:
     make_vault(tmp_path)
@@ -125,6 +156,14 @@ def test_build_graph_artifacts_generates_self_contained_html_dashboard(tmp_path:
     assert "nodes.csv" in html_dashboard
     assert "edges.csv" in html_dashboard
     assert "python -m http.server" in html_dashboard
+    assert "Graph view + Week slider" in html_dashboard
+    assert "data-view=\"combined\"" in html_dashboard
+    assert ">Combined</button>" in html_dashboard
+    assert ">Themes</button>" in html_dashboard
+    assert ">Tickers</button>" in html_dashboard
+    assert "id=\"week-slider\"" in html_dashboard
+    assert "id=\"week-label\"" in html_dashboard
+    assert "Use the slider to inspect evolution week by week" in html_dashboard
 
     graph_data = html_dashboard.split(
         "<script id=\"graph-data\" type=\"application/json\">", 1
@@ -132,6 +171,13 @@ def test_build_graph_artifacts_generates_self_contained_html_dashboard(tmp_path:
     payload = json.loads(graph_data)
 
     assert payload["summary"]["classified_block_count"] == 3
+    assert payload["summary"]["weekly_graph"]["bucket_count"] == 1
+    assert payload["weekly_graph"]["buckets"][0]["key"] == "2026-W15"
+    assert payload["weekly_graph"]["buckets"][0]["block_count"] == 3
+    assert (
+        payload["weekly_graph"]["buckets"][0]["nodes"]
+        == payload["summary"]["weekly_graph"]["buckets"][0]["nodes"]
+    )
     assert payload["top_n"] == 10
     assert {node["node_id"] for node in payload["nodes"]} >= {"source:CNBC", "ticker:NVDA", "theme:AI"}
     assert {edge["source_id"] for edge in payload["edges"]} >= {"source:CNBC", "theme:AI"}
@@ -231,6 +277,71 @@ def test_normalize_source_label_variants() -> None:
     # Unknown source passes through cleaned
     assert n("Agent SomeNewSource") == "SomeNewSource"
     assert n("source_SomeNewSource") == "SomeNewSource"
+
+
+def test_iso_week_helpers_use_stable_monday_sunday_bounds() -> None:
+    block_date = graph_metrics.parse_block_date({"date": "2026-04-10"})
+    assert block_date is not None
+
+    assert graph_metrics.iso_week_key(block_date) == "2026-W15"
+    assert graph_metrics.iso_week_bounds(block_date) == ("2026-04-06", "2026-04-12")
+
+
+def test_compute_weekly_graph_stats_is_sorted_and_deterministic() -> None:
+    blocks = [
+        {
+            "date": "2026-04-10",
+            "source": "Agent CNBC",
+            "tickers": ["NVDA", "MSFT", "NVDA"],
+            "themes": ["AI", "Technology"],
+        },
+        {
+            "date": "2026-04-01",
+            "source": "Agent Yahoo Finance",
+            "tickers": ["AAPL"],
+            "themes": ["Technology"],
+        },
+        {
+            "date": "",
+            "source": "Agent CNBC",
+            "tickers": ["TSLA"],
+            "themes": ["Autos"],
+        },
+    ]
+
+    weekly_graph = graph_metrics.compute_weekly_graph_stats(blocks, top_n=10)
+
+    assert weekly_graph["bucket_count"] == 2
+    assert weekly_graph["undated_block_count"] == 1
+    assert [bucket["key"] for bucket in weekly_graph["buckets"]] == ["2026-W14", "2026-W15"]
+
+    week_14, week_15 = weekly_graph["buckets"]
+    assert week_14["start_date"] == "2026-03-30"
+    assert week_14["end_date"] == "2026-04-05"
+    assert week_14["block_count"] == 1
+    assert week_14["nodes"] == [
+        {"node_id": "source:Yahoo Finance", "node_type": "source", "count": 1},
+        {"node_id": "theme:Technology", "node_type": "theme", "count": 1},
+        {"node_id": "ticker:AAPL", "node_type": "ticker", "count": 1},
+    ]
+    assert week_14["edges"] == [
+        {"source_id": "source:Yahoo Finance", "target_id": "theme:Technology", "weight": 1},
+        {"source_id": "source:Yahoo Finance", "target_id": "ticker:AAPL", "weight": 1},
+        {"source_id": "theme:Technology", "target_id": "ticker:AAPL", "weight": 1},
+        {"source_id": "ticker:AAPL", "target_id": "theme:Technology", "weight": 1},
+    ]
+
+    week_15_edges = {
+        (edge["source_id"], edge["target_id"]): edge["weight"]
+        for edge in week_15["edges"]
+    }
+    assert week_15["block_count"] == 1
+    assert week_15["top_tickers"] == [
+        {"label": "MSFT", "mentions": 1},
+        {"label": "NVDA", "mentions": 1},
+    ]
+    assert week_15_edges[("source:CNBC", "ticker:NVDA")] == 1
+    assert week_15_edges[("ticker:NVDA", "theme:Technology")] == 1
 
 
 def test_recent_window_stats_filters_by_date() -> None:

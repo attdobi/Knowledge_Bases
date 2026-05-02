@@ -332,6 +332,10 @@ def build_graph_artifacts(
         classified_dates=classified_dates,
         top_n=top_n,
     )
+    weekly_graph_stats = compute_weekly_graph_stats(
+        classified_blocks=classified_blocks,
+        top_n=top_n,
+    )
 
     summary = build_summary(
         input_path=input_path,
@@ -348,6 +352,7 @@ def build_graph_artifacts(
         source_coverage=source_coverage,
         recent_window_days=RECENT_WINDOW_DAYS,
         recent_window_stats=recent_window_stats,
+        weekly_graph_stats=weekly_graph_stats,
     )
     dashboard = build_dashboard(
         input_path=input_path,
@@ -711,6 +716,158 @@ def compute_recent_window_stats(
     return results
 
 
+def iso_week_key(block_date: datetime) -> str:
+    """Return a stable ISO year-week key for a classified block date."""
+    iso_year, iso_week, _ = block_date.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
+def iso_week_bounds(block_date: datetime) -> tuple[str, str]:
+    """Return Monday/Sunday date strings for the ISO week containing ``block_date``."""
+    week_start = block_date - timedelta(days=block_date.isoweekday() - 1)
+    week_end = week_start + timedelta(days=6)
+    return week_start.strftime("%Y-%m-%d"), week_end.strftime("%Y-%m-%d")
+
+
+def node_key_to_id(node: NodeKey) -> str:
+    node_type, label = node
+    return f"{node_type}:{label}"
+
+
+def compute_weekly_graph_stats(
+    classified_blocks: list[dict[str, Any]],
+    top_n: int = 10,
+) -> dict[str, Any]:
+    """Aggregate graph node/edge counts into deterministic ISO-week buckets.
+
+    The dashboard uses this compact payload for client-side week filtering without
+    shipping raw article blocks. Each bucket stores counts for the same directed
+    edge model as the global graph: source→ticker, source→theme, and ticker↔theme.
+    """
+    buckets: dict[str, dict[str, Any]] = {}
+    undated_block_count = 0
+
+    for block in classified_blocks:
+        block_date = parse_block_date(block)
+        if block_date is None:
+            undated_block_count += 1
+            continue
+
+        key = iso_week_key(block_date)
+        start_date, end_date = iso_week_bounds(block_date)
+        bucket = buckets.setdefault(
+            key,
+            {
+                "key": key,
+                "label": key,
+                "start_date": start_date,
+                "end_date": end_date,
+                "block_count": 0,
+                "nodes": Counter(),
+                "node_types": {},
+                "edges": Counter(),
+                "sources": Counter(),
+                "tickers": Counter(),
+                "themes": Counter(),
+            },
+        )
+        bucket["block_count"] += 1
+
+        source_label = normalize_source_label(block.get("source"))
+        source_node = ("source", source_label) if source_label else None
+        ticker_nodes = [("ticker", ticker) for ticker in sorted_unique_tickers(block.get("tickers"))]
+        theme_nodes = [("theme", theme) for theme in sorted_unique_theme_labels(block.get("themes"))]
+
+        block_nodes: list[NodeKey] = []
+        if source_node is not None:
+            block_nodes.append(source_node)
+            bucket["sources"][source_label] += 1
+        for node in ticker_nodes:
+            block_nodes.append(node)
+            bucket["tickers"][node[1]] += 1
+        for node in theme_nodes:
+            block_nodes.append(node)
+            bucket["themes"][node[1]] += 1
+
+        for node in block_nodes:
+            node_id = node_key_to_id(node)
+            bucket["nodes"][node_id] += 1
+            bucket["node_types"][node_id] = node[0]
+
+        if source_node is not None:
+            for ticker_node in ticker_nodes:
+                bucket["edges"][(node_key_to_id(source_node), node_key_to_id(ticker_node))] += 1
+            for theme_node in theme_nodes:
+                bucket["edges"][(node_key_to_id(source_node), node_key_to_id(theme_node))] += 1
+
+        for ticker_node in ticker_nodes:
+            for theme_node in theme_nodes:
+                bucket["edges"][(node_key_to_id(ticker_node), node_key_to_id(theme_node))] += 1
+                bucket["edges"][(node_key_to_id(theme_node), node_key_to_id(ticker_node))] += 1
+
+    serialized_buckets: list[dict[str, Any]] = []
+    for key in sorted(buckets):
+        bucket = buckets[key]
+        node_counter: Counter[str] = bucket["nodes"]
+        node_types: dict[str, str] = bucket["node_types"]
+        edge_counter: Counter[tuple[str, str]] = bucket["edges"]
+        node_counts_by_type = Counter(node_types[node_id] for node_id in node_counter)
+        serialized_buckets.append(
+            {
+                "key": key,
+                "label": bucket["label"],
+                "start_date": bucket["start_date"],
+                "end_date": bucket["end_date"],
+                "block_count": int(bucket["block_count"]),
+                "unique_sources": len(bucket["sources"]),
+                "unique_tickers": len(bucket["tickers"]),
+                "unique_themes": len(bucket["themes"]),
+                "node_counts_by_type": dict(sorted(node_counts_by_type.items())),
+                "top_sources": counter_to_ranked_items(bucket["sources"], top_n),
+                "top_tickers": counter_to_ranked_items(bucket["tickers"], top_n),
+                "top_themes": counter_to_ranked_items(bucket["themes"], top_n),
+                "nodes": [
+                    {
+                        "node_id": node_id,
+                        "node_type": node_types.get(node_id, node_id.split(":", 1)[0]),
+                        "count": int(count),
+                    }
+                    for node_id, count in sorted(
+                        node_counter.items(),
+                        key=lambda item: (-item[1], item[0].casefold(), item[0]),
+                    )
+                ],
+                "edges": [
+                    {
+                        "source_id": source_id,
+                        "target_id": target_id,
+                        "weight": int(weight),
+                    }
+                    for (source_id, target_id), weight in sorted(
+                        edge_counter.items(),
+                        key=lambda item: (item[0][0].casefold(), item[0][0], item[0][1].casefold(), item[0][1]),
+                    )
+                ],
+            }
+        )
+
+    return {
+        "bucket_count": len(serialized_buckets),
+        "undated_block_count": undated_block_count,
+        "buckets": serialized_buckets,
+    }
+
+
+def counter_to_ranked_items(counter: Counter[str], top_n: int) -> list[dict[str, Any]]:
+    return [
+        {"label": label, "mentions": int(count)}
+        for label, count in sorted(
+            counter.items(),
+            key=lambda item: (-item[1], item[0].casefold(), item[0]),
+        )[:top_n]
+    ]
+
+
 def build_summary(
     *,
     input_path: Path,
@@ -727,6 +884,7 @@ def build_summary(
     source_coverage: dict[str, dict[str, Any]],
     recent_window_days: int,
     recent_window_stats: list[dict[str, Any]],
+    weekly_graph_stats: dict[str, Any],
 ) -> dict[str, Any]:
     nodes_by_type = Counter(row.node_type for row in node_rows)
     edge_weight_total = sum(int(row["weight"]) for row in edge_rows)
@@ -767,6 +925,7 @@ def build_summary(
         "source_coverage": source_coverage,
         "recent_window_days": recent_window_days,
         "recent_windows": recent_window_stats,
+        "weekly_graph": weekly_graph_stats,
     }
 
 
@@ -907,6 +1066,7 @@ def build_dashboard_html(
     dashboard_data = {
         "input_path": input_path.as_posix(),
         "summary": summary,
+        "weekly_graph": summary.get("weekly_graph", {}),
         "nodes": [node_row_to_dict(row) for row in node_rows],
         "edges": edge_rows,
         "top_n": top_n,
@@ -949,6 +1109,7 @@ def build_dashboard_html(
     }
     a { color: #7dd3fc; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    button, input { font: inherit; }
     .shell { max-width: 1280px; margin: 0 auto; padding: 28px; }
     header { margin-bottom: 22px; }
     h1 { margin: 0 0 6px; font-size: clamp(28px, 5vw, 48px); letter-spacing: -0.04em; }
@@ -964,7 +1125,7 @@ def build_dashboard_html(
       box-shadow: 0 18px 50px rgba(0,0,0,0.24);
     }
     .card { padding: 16px; }
-    .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .card .label, .control-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
     .card .value { margin-top: 8px; font-size: 28px; font-weight: 750; letter-spacing: -0.03em; }
     section { padding: 18px; min-width: 0; }
     .two-col { grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); align-items: start; }
@@ -972,6 +1133,21 @@ def build_dashboard_html(
     .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); margin-top: 12px; }
     .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px; color: #cbd5e1; background: rgba(15,23,42,0.48); }
     .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+    .controls-panel { margin-bottom: 16px; }
+    .controls-grid { display: grid; grid-template-columns: minmax(260px, 0.55fr) minmax(320px, 1fr); gap: 18px; align-items: end; }
+    .segmented { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .segmented button {
+      color: #cbd5e1;
+      background: rgba(15,23,42,0.5);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 13px;
+      cursor: pointer;
+    }
+    .segmented button.active { color: #06121f; border-color: var(--accent); background: linear-gradient(90deg, var(--accent), #818cf8); font-weight: 750; }
+    .week-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin: 8px 0 6px; }
+    #week-label { color: #f8fafc; font-weight: 750; }
+    #week-slider { width: 100%; accent-color: var(--accent); }
     .bar-row { display: grid; grid-template-columns: minmax(105px, 0.95fr) minmax(150px, 2fr) 70px; gap: 10px; align-items: center; margin: 8px 0; }
     .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bar-track { height: 12px; border-radius: 999px; background: rgba(148,163,184,0.16); overflow: hidden; }
@@ -982,7 +1158,7 @@ def build_dashboard_html(
     th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     .table-wrap { overflow-x: auto; }
-    #network { width: 100%; min-height: 520px; border-radius: 14px; background: rgba(15,23,42,0.58); border: 1px solid var(--border); }
+    #network { width: 100%; min-height: 520px; border-radius: 14px; background: rgba(15,23,42,0.58); border: 1px solid var(--border); display: grid; place-items: center; }
     .network-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
     .type-source { color: var(--source); }
     .type-ticker { color: var(--ticker); }
@@ -991,8 +1167,9 @@ def build_dashboard_html(
     .recent-card { padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: rgba(15,23,42,0.35); }
     .recent-card strong { color: #f8fafc; }
     .small { color: var(--muted); font-size: 13px; }
+    .empty { color: var(--muted); padding: 24px; text-align: center; }
     .artifacts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
-    @media (max-width: 900px) { .shell { padding: 18px; } .two-col { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) { .shell { padding: 18px; } .two-col, .controls-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -1013,33 +1190,53 @@ def build_dashboard_html(
       </div>
     </header>
 
+    <section class=\"controls-panel\">
+      <h2>Graph view + Week slider</h2>
+      <div class=\"controls-grid\">
+        <div>
+          <div class=\"control-label\">Graph view</div>
+          <div id=\"view-controls\" class=\"segmented\" role=\"tablist\" aria-label=\"Graph view\">
+            <button type=\"button\" data-view=\"combined\" class=\"active\">Combined</button>
+            <button type=\"button\" data-view=\"themes\">Themes</button>
+            <button type=\"button\" data-view=\"tickers\">Tickers</button>
+          </div>
+        </div>
+        <div>
+          <div class=\"control-label\">Week slider</div>
+          <div class=\"week-head\"><span id=\"week-label\">All weeks</span><span id=\"week-position\" class=\"small\">All</span></div>
+          <input id=\"week-slider\" type=\"range\" min=\"0\" max=\"0\" step=\"1\" value=\"0\" aria-label=\"Filter dashboard by ISO week\">
+          <div id=\"week-meta\" class=\"small\">Use the slider to inspect evolution week by week, or leave it on all weeks.</div>
+        </div>
+      </div>
+    </section>
+
     <div class=\"grid cards\">
-      <div class=\"card\"><div class=\"label\">Classified blocks</div><div class=\"value\">__BLOCKS__</div></div>
-      <div class=\"card\"><div class=\"label\">Nodes</div><div class=\"value\">__NODES__</div></div>
-      <div class=\"card\"><div class=\"label\">Edges</div><div class=\"value\">__EDGES__</div></div>
-      <div class=\"card\"><div class=\"label\">Clusters</div><div class=\"value\">__CLUSTERS__</div></div>
-      <div class=\"card\"><div class=\"label\">Edge weight</div><div class=\"value\">__EDGE_WEIGHT__</div></div>
+      <div class=\"card\"><div class=\"label\">Classified blocks</div><div id=\"card-blocks\" class=\"value\">__BLOCKS__</div></div>
+      <div class=\"card\"><div class=\"label\">Visible nodes</div><div id=\"card-nodes\" class=\"value\">__NODES__</div></div>
+      <div class=\"card\"><div class=\"label\">Visible edges</div><div id=\"card-edges\" class=\"value\">__EDGES__</div></div>
+      <div class=\"card\"><div class=\"label\">Visible clusters</div><div id=\"card-clusters\" class=\"value\">__CLUSTERS__</div></div>
+      <div class=\"card\"><div class=\"label\">Edge weight</div><div id=\"card-edge-weight\" class=\"value\">__EDGE_WEIGHT__</div></div>
     </div>
 
     <div class=\"grid two-col\">
       <section>
         <h2>Network overview</h2>
         <div id=\"network\"></div>
-        <p class=\"network-note\">Showing a focused subgraph from top weighted-degree, PageRank, and recent nodes. Circle size follows weighted degree; edge width follows co-mention weight.</p>
+        <p class=\"network-note\">Filtered by graph view and week. Theme view shows source→theme edges; ticker view shows source→ticker edges; combined also includes ticker↔theme co-mentions.</p>
       </section>
       <section>
         <h2>Node mix</h2>
-        <p class=\"small\">__NODE_TYPES__</p>
+        <p id=\"node-type-summary\" class=\"small\">__NODE_TYPES__</p>
         <div id=\"type-bars\"></div>
-        <h2 style=\"margin-top:22px\">Recent windows</h2>
-        <div id=\"recent-windows\" class=\"recent-list\">__RECENT_WINDOWS_STATIC__</div>
+        <h2 style=\"margin-top:22px\">Period highlights</h2>
+        <div id=\"period-highlights\" class=\"recent-list\">__RECENT_WINDOWS_STATIC__</div>
       </section>
     </div>
 
     <div class=\"grid three-col\" style=\"margin-top:16px\">
       <section><h2>Top PageRank</h2><div id=\"pagerank-bars\"></div></section>
       <section><h2>Top weighted degree</h2><div id=\"degree-bars\"></div></section>
-      <section><h2>Top recency</h2><div id=\"recency-bars\"></div></section>
+      <section><h2>Top activity</h2><div id=\"activity-bars\"></div></section>
     </div>
 
     <section style=\"margin-top:16px\">
@@ -1070,17 +1267,23 @@ def build_dashboard_html(
       const nodes = data.nodes || [];
       const edges = data.edges || [];
       const summary = data.summary || {};
+      const weeklyGraph = data.weekly_graph || summary.weekly_graph || {};
+      const weekBuckets = weeklyGraph.buckets || [];
       const topN = Math.max(1, data.top_n || 15);
       const typeColors = { source: '#38bdf8', ticker: '#a78bfa', theme: '#34d399' };
-
+      const viewLabels = { combined: 'Combined', themes: 'Themes', tickers: 'Tickers' };
+      const allowedTypes = {
+        combined: new Set(['source', 'ticker', 'theme']),
+        themes: new Set(['source', 'theme']),
+        tickers: new Set(['source', 'ticker']),
+      };
+      const state = { view: 'combined', weekIndex: 0 };
+      const nodeById = new Map(nodes.map((node) => [node.node_id, node]));
+      const edgeByPair = new Map(edges.map((edge) => [`${edge.source_id}\u0000${edge.target_id}`, edge]));
+      const baseEdgeWeight = (edge) => Number(edge.weight || 0);
       const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 });
-      const metricValue = (node, metric) => Number(node[metric] || 0);
-      const byMetric = (metric) => nodes.slice().sort((a, b) => metricValue(b, metric) - metricValue(a, metric) || a.node_id.localeCompare(b.node_id));
-      const topNodes = (metric, limit = topN) => byMetric(metric).slice(0, limit);
-      const maxOf = (items, metric) => Math.max(1e-12, ...items.map((node) => metricValue(node, metric)));
 
       function clear(element) { while (element.firstChild) element.removeChild(element.firstChild); }
-      function appendText(parent, text) { parent.appendChild(document.createTextNode(text)); }
       function nodeHref(node) { return node.note_path ? '../../' + encodeURI(node.note_path + '.md') : null; }
       function nodeLabel(node) { return `${node.label} (${node.node_type})`; }
       function nodeLink(node) {
@@ -1093,12 +1296,104 @@ def build_dashboard_html(
         link.textContent = node.label;
         return link;
       }
+      function currentBucket() { return state.weekIndex === 0 ? null : weekBuckets[state.weekIndex - 1] || null; }
+      function edgeMatchesView(edge) {
+        if (state.view === 'combined') return true;
+        if (state.view === 'themes') return edge.source_type === 'source' && edge.target_type === 'theme';
+        if (state.view === 'tickers') return edge.source_type === 'source' && edge.target_type === 'ticker';
+        return true;
+      }
+      function nodeAllowed(node) { return (allowedTypes[state.view] || allowedTypes.combined).has(node.node_type); }
+      function typeCountsToText(counts) {
+        const parts = Object.keys(counts).sort().map((type) => `${type}: ${counts[type]}`);
+        return parts.length ? parts.join(', ') : 'none';
+      }
+      function emptyBlock(text) {
+        const div = document.createElement('div');
+        div.className = 'empty';
+        div.textContent = text;
+        return div;
+      }
 
-      function renderBars(containerId, metric, formatter = (value) => fmt.format(value)) {
+      function buildFilteredGraph() {
+        const bucket = currentBucket();
+        const countMap = new Map();
+        let candidateEdges;
+        if (bucket) {
+          for (const item of bucket.nodes || []) countMap.set(item.node_id, Number(item.count || 0));
+          candidateEdges = (bucket.edges || []).map((edge) => {
+            const base = edgeByPair.get(`${edge.source_id}\u0000${edge.target_id}`) || {};
+            const source = nodeById.get(edge.source_id) || {};
+            const target = nodeById.get(edge.target_id) || {};
+            return {
+              ...base,
+              source_id: edge.source_id,
+              target_id: edge.target_id,
+              source_type: base.source_type || source.node_type || edge.source_id.split(':', 1)[0],
+              target_type: base.target_type || target.node_type || edge.target_id.split(':', 1)[0],
+              source_label: base.source_label || source.label || edge.source_id,
+              target_label: base.target_label || target.label || edge.target_id,
+              weight: Number(edge.weight || 0),
+            };
+          });
+        } else {
+          for (const node of nodes) countMap.set(node.node_id, Number(node.block_count || 0));
+          candidateEdges = edges.map((edge) => ({ ...edge, weight: baseEdgeWeight(edge) }));
+        }
+
+        const filteredEdges = candidateEdges
+          .filter((edge) => baseEdgeWeight(edge) > 0 && edgeMatchesView(edge))
+          .sort((a, b) => baseEdgeWeight(b) - baseEdgeWeight(a) || a.source_id.localeCompare(b.source_id) || a.target_id.localeCompare(b.target_id));
+
+        const weightedIn = new Map();
+        const weightedOut = new Map();
+        for (const edge of filteredEdges) {
+          const weight = baseEdgeWeight(edge);
+          weightedOut.set(edge.source_id, (weightedOut.get(edge.source_id) || 0) + weight);
+          weightedIn.set(edge.target_id, (weightedIn.get(edge.target_id) || 0) + weight);
+        }
+
+        const filteredNodes = nodes
+          .filter((node) => nodeAllowed(node) && (!bucket || countMap.has(node.node_id)))
+          .map((node) => {
+            const periodCount = Number(countMap.get(node.node_id) || 0);
+            const inWeight = Number(weightedIn.get(node.node_id) || 0);
+            const outWeight = Number(weightedOut.get(node.node_id) || 0);
+            return {
+              ...node,
+              period_count: periodCount,
+              visible_block_count: bucket ? periodCount : Number(node.block_count || 0),
+              weighted_in_degree_filtered: inWeight,
+              weighted_out_degree_filtered: outWeight,
+              weighted_degree_filtered: inWeight + outWeight,
+              activity_score: bucket ? periodCount : Number(node.recency_score || node.recent_block_count || node.block_count || 0),
+            };
+          })
+          .sort((a, b) => b.weighted_degree_filtered - a.weighted_degree_filtered || b.pagerank - a.pagerank || a.node_id.localeCompare(b.node_id));
+
+        const visibleIds = new Set(filteredNodes.map((node) => node.node_id));
+        return {
+          bucket,
+          nodes: filteredNodes,
+          edges: filteredEdges.filter((edge) => visibleIds.has(edge.source_id) && visibleIds.has(edge.target_id)),
+          countMap,
+        };
+      }
+
+      function topNodes(filtered, metric, limit = topN) {
+        return filtered.nodes.slice().sort((a, b) => Number(b[metric] || 0) - Number(a[metric] || 0) || a.node_id.localeCompare(b.node_id)).slice(0, limit);
+      }
+      function maxOf(items, metric) { return Math.max(1e-12, ...items.map((node) => Number(node[metric] || 0))); }
+
+      function renderBars(containerId, filtered, metric, formatter = (value) => fmt.format(value)) {
         const container = document.getElementById(containerId);
         if (!container) return;
         clear(container);
-        const items = topNodes(metric);
+        const items = topNodes(filtered, metric);
+        if (!items.length) {
+          container.appendChild(emptyBlock('No nodes match this view/week.'));
+          return;
+        }
         const maxValue = maxOf(items, metric);
         for (const node of items) {
           const row = document.createElement('div');
@@ -1112,21 +1407,24 @@ def build_dashboard_html(
           const fill = document.createElement('div');
           fill.className = 'bar-fill';
           fill.style.background = `linear-gradient(90deg, ${typeColors[node.node_type] || '#38bdf8'}, #818cf8)`;
-          fill.style.width = `${Math.max(2, metricValue(node, metric) / maxValue * 100)}%`;
+          fill.style.width = `${Math.max(2, Number(node[metric] || 0) / maxValue * 100)}%`;
           track.appendChild(fill);
           const value = document.createElement('div');
           value.className = 'bar-value';
-          value.textContent = formatter(metricValue(node, metric));
+          value.textContent = formatter(Number(node[metric] || 0));
           row.append(label, track, value);
           container.appendChild(row);
         }
       }
 
-      function renderTypeBars() {
+      function renderTypeBars(filtered) {
         const container = document.getElementById('type-bars');
         if (!container) return;
         clear(container);
-        const counts = summary.node_counts_by_type || {};
+        const counts = {};
+        for (const node of filtered.nodes) counts[node.node_type] = (counts[node.node_type] || 0) + 1;
+        const summaryNode = document.getElementById('node-type-summary');
+        if (summaryNode) summaryNode.textContent = typeCountsToText(counts);
         const maxValue = Math.max(1, ...Object.values(counts));
         for (const type of Object.keys(counts).sort()) {
           const row = document.createElement('div');
@@ -1149,22 +1447,31 @@ def build_dashboard_html(
         }
       }
 
-      function renderTopTable() {
+      function renderTopTable(filtered) {
         const table = document.getElementById('top-table');
         if (!table) return;
         clear(table);
         const thead = table.createTHead();
         const head = thead.insertRow();
-        ['Rank', 'Node', 'Type', 'PageRank', 'Weighted degree', 'Two-hop reach', 'Blocks', 'Recent', 'Cluster'].forEach((name, index) => {
+        ['Rank', 'Node', 'Type', 'PageRank', 'Visible degree', 'Period blocks', 'Global blocks', 'Cluster'].forEach((name, index) => {
           const th = document.createElement('th');
           th.textContent = name;
-          if (index > 2) th.className = 'num';
+          if (index > 2 || index === 0) th.className = 'num';
           head.appendChild(th);
         });
         const tbody = table.createTBody();
-        topNodes('weighted_degree', topN).forEach((node, index) => {
+        const rows = topNodes(filtered, 'weighted_degree_filtered', topN);
+        if (!rows.length) {
           const row = tbody.insertRow();
-          const values = [index + 1, null, node.node_type, node.pagerank.toFixed(6), node.weighted_degree, node.two_hop_reach, node.block_count, node.recent_block_count, node.cluster_id];
+          const cell = row.insertCell();
+          cell.colSpan = 8;
+          cell.className = 'empty';
+          cell.textContent = 'No visible nodes.';
+          return;
+        }
+        rows.forEach((node, index) => {
+          const row = tbody.insertRow();
+          const values = [index + 1, null, node.node_type, Number(node.pagerank || 0).toFixed(6), node.weighted_degree_filtered, node.visible_block_count, node.block_count, node.cluster_id];
           values.forEach((value, cellIndex) => {
             const cell = row.insertCell();
             if (cellIndex === 1) cell.appendChild(nodeLink(node));
@@ -1174,24 +1481,42 @@ def build_dashboard_html(
         });
       }
 
-      function renderSourceTable() {
+      function renderSourceTable(filtered) {
         const table = document.getElementById('source-table');
         if (!table) return;
         clear(table);
-        const coverage = summary.source_coverage || {};
-        const rows = Object.entries(coverage).sort((a, b) => b[1].blocks - a[1].blocks || a[0].localeCompare(b[0]));
+        const rowsBySource = new Map();
+        for (const node of filtered.nodes.filter((item) => item.node_type === 'source')) {
+          rowsBySource.set(node.node_id, { name: node.label, blocks: node.visible_block_count, tickers: new Set(), themes: new Set() });
+        }
+        for (const edge of filtered.edges) {
+          if (edge.source_type !== 'source') continue;
+          const source = rowsBySource.get(edge.source_id) || { name: edge.source_label || edge.source_id, blocks: filtered.countMap.get(edge.source_id) || 0, tickers: new Set(), themes: new Set() };
+          if (edge.target_type === 'ticker') source.tickers.add(edge.target_label || edge.target_id);
+          if (edge.target_type === 'theme') source.themes.add(edge.target_label || edge.target_id);
+          rowsBySource.set(edge.source_id, source);
+        }
+        const rows = Array.from(rowsBySource.values()).sort((a, b) => b.blocks - a.blocks || a.name.localeCompare(b.name));
         const thead = table.createTHead();
         const head = thead.insertRow();
-        ['Source', 'Blocks', 'Recent', 'Tickers', 'Themes'].forEach((name, index) => {
+        ['Source', 'Period blocks', 'Tickers', 'Themes'].forEach((name, index) => {
           const th = document.createElement('th');
           th.textContent = name;
           if (index > 0) th.className = 'num';
           head.appendChild(th);
         });
         const tbody = table.createTBody();
-        for (const [name, stats] of rows) {
+        if (!rows.length) {
           const row = tbody.insertRow();
-          [name, stats.blocks, stats.recent_blocks, (stats.tickers || []).length, (stats.themes || []).length].forEach((value, index) => {
+          const cell = row.insertCell();
+          cell.colSpan = 4;
+          cell.className = 'empty';
+          cell.textContent = 'No source coverage for this view/week.';
+          return;
+        }
+        for (const rowData of rows) {
+          const row = tbody.insertRow();
+          [rowData.name, rowData.blocks, rowData.tickers.size, rowData.themes.size].forEach((value, index) => {
             const cell = row.insertCell();
             cell.textContent = value;
             if (index > 0) cell.className = 'num';
@@ -1199,31 +1524,57 @@ def build_dashboard_html(
         }
       }
 
-      function renderRecentWindows() {
-        const container = document.getElementById('recent-windows');
-        if (!container || container.dataset.rendered === '1') return;
+      function rankedText(items) {
+        return (items || []).slice(0, 6).map((item) => `${item.label} (${item.mentions})`).join(', ') || 'n/a';
+      }
+      function renderPeriodHighlights(filtered) {
+        const container = document.getElementById('period-highlights');
+        if (!container) return;
         clear(container);
-        for (const window of summary.recent_windows || []) {
-          const card = document.createElement('div');
-          card.className = 'recent-card';
-          const title = document.createElement('strong');
-          title.textContent = `${window.window_days}d: ${window.cutoff_date} → ${window.anchor_date}`;
-          const counts = document.createElement('div');
-          counts.className = 'small';
-          counts.textContent = `Blocks ${window.block_count} · Sources ${window.unique_sources} · Tickers ${window.unique_tickers} · Themes ${window.unique_themes}`;
-          const tickers = document.createElement('div');
-          tickers.className = 'small';
-          tickers.textContent = `Top tickers: ${(window.top_tickers || []).slice(0, 5).map((item) => `${item.label} (${item.mentions})`).join(', ') || 'n/a'}`;
-          const themes = document.createElement('div');
-          themes.className = 'small';
-          themes.textContent = `Top themes: ${(window.top_themes || []).slice(0, 5).map((item) => `${item.label} (${item.mentions})`).join(', ') || 'n/a'}`;
-          card.append(title, counts, tickers, themes);
-          container.appendChild(card);
+        const bucket = filtered.bucket;
+        if (!bucket) {
+          for (const window of summary.recent_windows || []) {
+            const card = document.createElement('div');
+            card.className = 'recent-card';
+            const title = document.createElement('strong');
+            title.textContent = `${window.window_days}d: ${window.cutoff_date} → ${window.anchor_date}`;
+            const counts = document.createElement('div');
+            counts.className = 'small';
+            counts.textContent = `Blocks ${window.block_count} · Sources ${window.unique_sources} · Tickers ${window.unique_tickers} · Themes ${window.unique_themes}`;
+            const tickers = document.createElement('div');
+            tickers.className = 'small';
+            tickers.textContent = `Top tickers: ${rankedText(window.top_tickers)}`;
+            const themes = document.createElement('div');
+            themes.className = 'small';
+            themes.textContent = `Top themes: ${rankedText(window.top_themes)}`;
+            card.append(title, counts, tickers, themes);
+            container.appendChild(card);
+          }
+          if (!container.childNodes.length) container.appendChild(emptyBlock('No recent-window data available.'));
+          return;
         }
-        container.dataset.rendered = '1';
+        const card = document.createElement('div');
+        card.className = 'recent-card';
+        const title = document.createElement('strong');
+        title.textContent = `${bucket.label}: ${bucket.start_date} → ${bucket.end_date}`;
+        const counts = document.createElement('div');
+        counts.className = 'small';
+        counts.textContent = `Blocks ${bucket.block_count} · Sources ${bucket.unique_sources} · Tickers ${bucket.unique_tickers} · Themes ${bucket.unique_themes}`;
+        card.append(title, counts);
+        const lines = [];
+        if (state.view !== 'tickers') lines.push(['Top themes', bucket.top_themes]);
+        if (state.view !== 'themes') lines.push(['Top tickers', bucket.top_tickers]);
+        lines.unshift(['Top sources', bucket.top_sources]);
+        for (const [label, items] of lines) {
+          const div = document.createElement('div');
+          div.className = 'small';
+          div.textContent = `${label}: ${rankedText(items)}`;
+          card.appendChild(div);
+        }
+        container.appendChild(card);
       }
 
-      function drawNetwork() {
+      function drawNetwork(filtered) {
         const container = document.getElementById('network');
         if (!container) return;
         clear(container);
@@ -1231,28 +1582,31 @@ def build_dashboard_html(
         const seen = new Set();
         const add = (items) => {
           for (const node of items) {
-            if (selected.length >= 48) return;
+            if (selected.length >= 56) return;
             if (!seen.has(node.node_id)) {
               seen.add(node.node_id);
               selected.push(node);
             }
           }
         };
-        add(topNodes('weighted_degree', 28));
-        add(topNodes('pagerank', 14));
-        add(topNodes('recency_score', 10));
+        add(topNodes(filtered, 'weighted_degree_filtered', 32));
+        add(topNodes(filtered, 'pagerank', 14));
+        add(topNodes(filtered, 'activity_score', 12));
+        if (!selected.length) {
+          container.appendChild(emptyBlock('No network data for this view/week.'));
+          return;
+        }
         const selectedIds = new Set(selected.map((node) => node.node_id));
-        const nodeById = new Map(selected.map((node) => [node.node_id, node]));
-        const graphEdges = edges
+        const graphEdges = filtered.edges
           .filter((edge) => selectedIds.has(edge.source_id) && selectedIds.has(edge.target_id))
           .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))
-          .slice(0, 140);
+          .slice(0, 160);
         const width = 960;
         const height = 560;
         const cx = width / 2;
         const cy = height / 2;
         const radius = Math.min(width, height) * 0.38;
-        const maxDegree = Math.max(1, ...selected.map((node) => Number(node.weighted_degree || 0)));
+        const maxDegree = Math.max(1, ...selected.map((node) => Number(node.weighted_degree_filtered || 0)));
         const maxWeight = Math.max(1, ...graphEdges.map((edge) => Number(edge.weight || 0)));
         const positions = new Map();
         selected.forEach((node, index) => {
@@ -1293,7 +1647,7 @@ def build_dashboard_html(
           if (!pos) continue;
           const group = document.createElementNS(svg.namespaceURI, 'g');
           const circle = document.createElementNS(svg.namespaceURI, 'circle');
-          const size = 7 + Math.sqrt(Number(node.weighted_degree || 0) / maxDegree) * 17;
+          const size = 7 + Math.sqrt(Number(node.weighted_degree_filtered || 0) / maxDegree) * 17;
           circle.setAttribute('cx', pos.x);
           circle.setAttribute('cy', pos.y);
           circle.setAttribute('r', String(size));
@@ -1303,7 +1657,7 @@ def build_dashboard_html(
           circle.setAttribute('stroke-opacity', '0.72');
           circle.setAttribute('stroke-width', '1.2');
           const title = document.createElementNS(svg.namespaceURI, 'title');
-          title.textContent = `${node.node_id}\nweighted degree: ${node.weighted_degree}\nPageRank: ${Number(node.pagerank || 0).toFixed(6)}\ncluster: ${node.cluster_id}`;
+          title.textContent = `${node.node_id}\nvisible degree: ${node.weighted_degree_filtered}\nperiod blocks: ${node.visible_block_count}\nPageRank: ${Number(node.pagerank || 0).toFixed(6)}\ncluster: ${node.cluster_id}`;
           circle.appendChild(title);
           group.appendChild(circle);
           if (size >= 12 || selected.length <= 34) {
@@ -1320,18 +1674,77 @@ def build_dashboard_html(
           }
           svg.appendChild(group);
         }
-
         container.appendChild(svg);
       }
 
-      renderTypeBars();
-      renderRecentWindows();
-      renderBars('pagerank-bars', 'pagerank', (value) => value.toFixed(6));
-      renderBars('degree-bars', 'weighted_degree', (value) => fmt.format(value));
-      renderBars('recency-bars', 'recency_score', (value) => value.toFixed(4));
-      renderTopTable();
-      renderSourceTable();
-      drawNetwork();
+      function updateCards(filtered) {
+        const edgeWeight = filtered.edges.reduce((sum, edge) => sum + Number(edge.weight || 0), 0);
+        const visibleClusters = new Set(filtered.nodes.map((node) => node.cluster_id));
+        const blocks = filtered.bucket ? filtered.bucket.block_count : summary.classified_block_count || 0;
+        const values = {
+          'card-blocks': blocks,
+          'card-nodes': filtered.nodes.length,
+          'card-edges': filtered.edges.length,
+          'card-clusters': visibleClusters.size,
+          'card-edge-weight': edgeWeight,
+        };
+        for (const [id, value] of Object.entries(values)) {
+          const element = document.getElementById(id);
+          if (element) element.textContent = fmt.format(value);
+        }
+      }
+
+      function updateWeekControls() {
+        const slider = document.getElementById('week-slider');
+        const label = document.getElementById('week-label');
+        const position = document.getElementById('week-position');
+        const meta = document.getElementById('week-meta');
+        if (slider) {
+          slider.max = String(weekBuckets.length);
+          slider.value = String(state.weekIndex);
+          slider.disabled = weekBuckets.length === 0;
+        }
+        const bucket = currentBucket();
+        if (label) label.textContent = bucket ? bucket.label : 'All weeks';
+        if (position) position.textContent = bucket ? `${state.weekIndex}/${weekBuckets.length}` : 'All';
+        if (meta) {
+          meta.textContent = bucket
+            ? `${bucket.start_date} → ${bucket.end_date} · ${bucket.block_count} classified blocks · ${viewLabels[state.view]} view`
+            : `All ${summary.classified_block_count || 0} classified blocks · ${viewLabels[state.view]} view`;
+        }
+      }
+
+      function render() {
+        updateWeekControls();
+        document.querySelectorAll('#view-controls button').forEach((button) => {
+          button.classList.toggle('active', button.dataset.view === state.view);
+        });
+        const filtered = buildFilteredGraph();
+        updateCards(filtered);
+        renderTypeBars(filtered);
+        renderPeriodHighlights(filtered);
+        renderBars('pagerank-bars', filtered, 'pagerank', (value) => value.toFixed(6));
+        renderBars('degree-bars', filtered, 'weighted_degree_filtered', (value) => fmt.format(value));
+        renderBars('activity-bars', filtered, 'activity_score', (value) => fmt.format(value));
+        renderTopTable(filtered);
+        renderSourceTable(filtered);
+        drawNetwork(filtered);
+      }
+
+      document.querySelectorAll('#view-controls button').forEach((button) => {
+        button.addEventListener('click', () => {
+          state.view = button.dataset.view || 'combined';
+          render();
+        });
+      });
+      const slider = document.getElementById('week-slider');
+      if (slider) {
+        slider.addEventListener('input', () => {
+          state.weekIndex = Number(slider.value || 0);
+          render();
+        });
+      }
+      render();
     })();
   </script>
 </body>
@@ -1353,7 +1766,6 @@ def build_dashboard_html(
     for placeholder, value in replacements.items():
         template = template.replace(placeholder, value)
     return template
-
 
 def node_row_to_dict(row: NodeRow) -> dict[str, Any]:
     return {
