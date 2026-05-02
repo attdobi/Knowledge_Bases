@@ -149,6 +149,33 @@ Use this when you want a narrow replay window without deleting the saved cursor 
 
 Important: this clears only the cursor. It does **not** prune old notes or attachments.
 
+### 5) Build curated graph metrics from organizer output
+
+Run this after `Organizer/organizer-report-latest.json` has been refreshed:
+
+```bash
+financial-news-graph
+# or
+python -m financial_news.graph_metrics
+```
+
+Default behavior:
+
+- reads `Organizer/organizer-report-latest.json`
+- writes `Organizer/graph-metrics/`
+- emits `nodes.csv`, `edges.csv`, `summary.json`, and `dashboard.md`
+- computes degree / weighted-degree metrics, two-hop reach, and PageRank
+
+Why this input source: the graph intentionally uses the organizer's classified source/ticker/theme blocks as a curated layer. That keeps the metrics tied to reviewed organizer structure instead of letting noisy vault-wide links or generic note backlinks dominate the graph.
+
+The summary and dashboard include recent-window snapshots (7d and 30d) anchored at the latest classified date in the organizer report. These provide a quick view of recent activity without requiring a separate filtered run. Source names are normalized across common naming variants (agent/source/src prefixes, underscores, dashes, and abbreviation dots like "B.B.C.").
+
+Example override:
+
+```bash
+financial-news-graph --input Organizer/organizer-report-latest.json --output-dir Organizer/graph-metrics --top-n 20
+```
+
 ## Implemented vs optional behavior
 
 ### Implemented in this branch

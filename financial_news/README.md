@@ -104,12 +104,14 @@ python -m pip install --upgrade pip
 python -m pip install '.[dev]'
 ```
 
-After that, either form works:
+After that, these entrypoints are available:
 
 ```bash
 financial-news-ingest --help
+financial-news-graph --help
 # or
 python -m financial_news --help
+python -m financial_news.graph_metrics --help
 ```
 
 ## Run tests
@@ -136,6 +138,55 @@ pytest -q
 --dry-run                   Parse and log rows without writing markdown or state
 --log-level                 Python logging level (default: INFO)
 ```
+
+## Graph metrics
+
+Use the separate graph CLI after the organizer report has been refreshed.
+
+### What it reads
+
+By default it reads the structured organizer output at:
+
+```text
+Organizer/organizer-report-latest.json
+```
+
+It only uses organizer blocks with `status == classified`, so the graph is built from curated source/ticker/theme assignments rather than noisy vault-wide scraping.
+
+### How to run it
+
+From the repo root or vault root:
+
+```bash
+financial-news-graph
+# or
+python -m financial_news.graph_metrics
+```
+
+Optional overrides:
+
+```bash
+financial-news-graph --input Organizer/organizer-report-latest.json --output-dir Organizer/graph-metrics --top-n 20
+```
+
+### What it generates
+
+By default it writes these artifacts under:
+
+```text
+Organizer/graph-metrics/
+```
+
+Artifacts:
+
+- `nodes.csv` — node-level metrics for sources, tickers, and themes
+- `edges.csv` — directed weighted edges across source→ticker, source→theme, and ticker↔theme links
+- `summary.json` — run metadata, counts, date range, and top-node summaries
+- `dashboard.md` — an operator-friendly leaderboard view for Obsidian / markdown review
+
+Metrics include unique neighbors / degree, in/out degree, weighted in/out degree, weighted degree, two-hop reach, and PageRank.
+
+The summary and dashboard also include recent-window snapshots (7d and 30d by default) anchored at the latest classified date, showing block/source/ticker/theme counts and top mentions per window. Source names are normalized across common variants (agent/source prefixes, underscores, dashes, abbreviation dots).
 
 ## Real remote-operator workflow
 

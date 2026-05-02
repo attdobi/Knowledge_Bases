@@ -1,0 +1,107 @@
+{
+  "generated_at": "2026-04-14T18:00:00+00:00",
+  "mode": "test",
+  "model": "fixture",
+  "counts": {
+    "blocks": 8,
+    "classified": 7
+  },
+  "blocks": [
+    {
+      "row_id": 1,
+      "date": "2026-03-25",
+      "note_path": "2026-03/2026-03-25_summary.md",
+      "source": "Agent Fox Business",
+      "status": "classified",
+      "tickers": ["TSLA"],
+      "themes": ["Energy"],
+      "summary": "Tesla energy play from weeks ago.",
+      "skip_reason": null,
+      "confidence": 0.88
+    },
+    {
+      "row_id": 2,
+      "date": "2026-03-25",
+      "note_path": "2026-03/2026-03-25_summary.md",
+      "source": "Agent Fox Business",
+      "status": "classified",
+      "tickers": ["TSLA", "XOM"],
+      "themes": ["Energy"],
+      "summary": "Legacy energy stocks including Tesla.",
+      "skip_reason": null,
+      "confidence": 0.85
+    },
+    {
+      "row_id": 3,
+      "date": "2026-04-05",
+      "note_path": "2026-04/2026-04-05_summary.md",
+      "source": "Agent CNBC",
+      "status": "classified",
+      "tickers": ["MSFT"],
+      "themes": ["AI", "Technology"],
+      "summary": "Microsoft AI expansion mid-cycle.",
+      "skip_reason": null,
+      "confidence": 0.92
+    },
+    {
+      "row_id": 4,
+      "date": "2026-04-10",
+      "note_path": "2026-04/2026-04-10_summary.md",
+      "source": "Agent CNBC",
+      "status": "classified",
+      "tickers": ["NVDA", "MSFT", "NVDA"],
+      "themes": ["AI", "Technology"],
+      "summary": "AI infrastructure remains in focus.",
+      "skip_reason": null,
+      "confidence": 0.94
+    },
+    {
+      "row_id": 5,
+      "date": "2026-04-10",
+      "note_path": "2026-04/2026-04-10_summary.md",
+      "source": "Agent CNBC",
+      "status": "classified",
+      "tickers": ["NVDA"],
+      "themes": ["AI"],
+      "summary": "NVDA stays tied to the AI trade.",
+      "skip_reason": null,
+      "confidence": 0.91
+    },
+    {
+      "row_id": 6,
+      "date": "2026-04-11",
+      "note_path": "2026-04/2026-04-11_summary.md",
+      "source": "Agent Yahoo Finance",
+      "status": "classified",
+      "tickers": ["AAPL"],
+      "themes": ["Technology"],
+      "summary": "Apple remains part of the broader tech tape.",
+      "skip_reason": null,
+      "confidence": 0.89
+    },
+    {
+      "row_id": 7,
+      "date": "2026-04-11",
+      "note_path": "2026-04/2026-04-11_summary.md",
+      "source": "Agent CNBC",
+      "status": "classified",
+      "tickers": ["NVDA"],
+      "themes": ["artificial intelligence"],
+      "summary": "Another NVDA mention using alias form.",
+      "skip_reason": null,
+      "confidence": 0.90
+    },
+    {
+      "row_id": 8,
+      "date": "2026-04-11",
+      "note_path": "2026-04/2026-04-11_summary.md",
+      "source": "Agent Benzinga",
+      "status": "skipped",
+      "tickers": ["TSLA"],
+      "themes": ["Autos"],
+      "summary": "Skipped block.",
+      "skip_reason": "not classified",
+      "confidence": 0.12
+    }
+  ]
+}
