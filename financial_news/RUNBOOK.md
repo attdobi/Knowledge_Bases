@@ -149,7 +149,24 @@ Use this when you want a narrow replay window without deleting the saved cursor 
 
 Important: this clears only the cursor. It does **not** prune old notes or attachments.
 
-### 5) Build curated graph metrics from organizer output
+### 5) Generate one weekly financial insight note
+
+Run this when you want a clear weekly digest from DB summaries without writing lots of extra source files:
+
+```bash
+financial-news-ingest --weekly-insights --week 2026-W14 --output-root /path/to/financial_news
+```
+
+Default behavior:
+
+- reads summaries for the ISO week from the configured `summaries` table
+- discovers common decisions-table names when available, or skips decisions cleanly when missing
+- writes one idempotent generated section to `Themes/YYYY-Www.md`
+- summarizes source coverage, top themes, most-mentioned tickers, summary highlights, and decisions
+
+Use `--start-date YYYY-MM-DD --end-date YYYY-MM-DD` for a custom inclusive range. Table-name flags (`--summaries-table`, `--decisions-table`) accept strict SQL identifiers only.
+
+### 6) Build curated graph metrics from organizer output
 
 Run this after `Organizer/organizer-report-latest.json` has been refreshed:
 
@@ -165,11 +182,11 @@ Default behavior:
 - writes `Organizer/graph-metrics/`
 - emits `nodes.csv`, `edges.csv`, `summary.json`, `dashboard.md`, and `dashboard.html`
 - computes degree / weighted-degree metrics, two-hop reach, and PageRank
-- writes `dashboard.html` as a self-contained browser view with metric cards, bar charts, source coverage, Combined/Themes/Tickers graph views, a weekly evolution slider, and an SVG network overview
+- writes `dashboard.html` as a browser view with embedded graph data, metric cards, bar charts, source coverage, Combined/Themes/Tickers graph views, a weekly evolution slider, and a CDN-light D3 force network with drag, zoom/pan, and node/edge tooltips
 
 Why this input source: the graph intentionally uses the organizer's classified source/ticker/theme blocks as a curated layer. That keeps the metrics tied to reviewed organizer structure instead of letting noisy vault-wide links or generic note backlinks dominate the graph.
 
-The summary and dashboards include recent-window snapshots (7d and 30d) anchored at the latest classified date in the organizer report, plus deterministic ISO-week buckets for the HTML dashboard slider. Use the browser controls to compare Combined, Themes, and Tickers views or inspect graph evolution one week at a time. Source names are normalized across common naming variants (agent/source/src prefixes, underscores, dashes, and abbreviation dots like "B.B.C.").
+The summary and dashboards include recent-window snapshots (7d and 30d) anchored at the latest classified date in the organizer report, plus deterministic ISO-week buckets for the HTML dashboard slider. Use the browser controls to compare Combined, Themes, and Tickers views or inspect graph evolution one week at a time; in the network panel, drag nodes, zoom/pan the canvas, and hover nodes or edges for tooltips. Source names are normalized across common naming variants (agent/source/src prefixes, underscores, dashes, and abbreviation dots like "B.B.C.").
 
 To view the HTML dashboard, open `Organizer/graph-metrics/dashboard.html` directly or serve the vault root:
 
@@ -197,7 +214,8 @@ financial-news-graph --input Organizer/organizer-report-latest.json --output-dir
 - reduced generic `Home` links in generated notes
 - optional image optimization/compression for copied static attachments
 - opt-in orphan-attachment pruning
-- gitignore rules to keep generated screenshot/day-note payload out of commits
+- weekly insights generation into `Themes/YYYY-Www.md` from DB summaries plus optional decisions
+- gitignore rules to keep generated screenshot/day-note/lowercase-source payload out of commits
 
 ### Explicitly not implemented here
 

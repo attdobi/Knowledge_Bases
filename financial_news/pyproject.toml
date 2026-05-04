@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 financial-news-ingest = "financial_news.ingest:main"
+financial-news-graph = "financial_news.graph_metrics:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -6,13 +6,19 @@ from pathlib import Path
 import re
 from typing import Any, Iterable
 
-from financial_news.models import SummaryRecord
+from financial_news.models import DecisionRecord, SummaryRecord
 from financial_news.topics import classify_topics
 
 AGENT_KEYS = ("agent", "source_agent", "assistant", "author", "bot", "model")
 TIMESTAMP_KEYS = ("timestamp", "created_at", "generated_at", "published_at", "datetime", "date", "time")
 HEADLINE_KEYS = ("headlines", "headline", "top_headlines", "news", "articles", "stories")
 INSIGHT_KEYS = ("insights", "analysis", "key_insights", "takeaways", "observations", "summary", "summaries")
+DECISION_AGENT_KEYS = AGENT_KEYS
+DECISION_TIMESTAMP_KEYS = TIMESTAMP_KEYS
+DECISION_ACTION_KEYS = ("action", "decision", "signal", "recommendation", "stance", "rating")
+DECISION_CONFIDENCE_KEYS = ("confidence", "conviction", "score", "probability")
+DECISION_RATIONALE_KEYS = ("rationale", "reasoning", "reason", "analysis", "summary", "notes", "explanation")
+
 ATTACHMENT_KEYS = (
     "attachments",
     "files",
@@ -244,5 +250,50 @@ def parse_summary_record(
         attachments=attachments,
         tickers=tickers,
         categories=categories,
+        raw_content=content,
+    )
+
+
+def _first_string(content: Any, keys: tuple[str, ...]) -> str | None:
+    value = find_first_scalar(content, keys)
+    if value in (None, "", [], {}):
+        return None
+    strings = flatten_strings(value)
+    return strings[0] if strings else str(value).strip() or None
+
+
+def parse_decision_record(
+    row_id: int,
+    row_timestamp: datetime | None,
+    content: dict[str, Any] | list[Any] | str | None,
+    *,
+    fallback_agent: str | None = None,
+    fallback_action: str | None = None,
+    fallback_ticker: str | None = None,
+) -> DecisionRecord:
+    """Parse a trading/portfolio decision row into a compact weekly-insight record.
+
+    The real DB has changed shape a few times, so this parser stays intentionally
+    tolerant: it prefers obvious structured keys, then falls back to scalar columns
+    supplied by the DB adapter.
+    """
+    agent_value = find_first_scalar(content, DECISION_AGENT_KEYS) or fallback_agent
+    timestamp_value = find_first_scalar(content, DECISION_TIMESTAMP_KEYS)
+    action = _first_string(content, DECISION_ACTION_KEYS) or fallback_action
+    confidence = _first_string(content, DECISION_CONFIDENCE_KEYS)
+    rationale = find_collection(content, DECISION_RATIONALE_KEYS)
+    tickers = find_tickers(content)
+    ticker = tickers[0] if tickers else normalize_ticker(fallback_ticker or "")
+
+    agent = str(agent_value).strip() if agent_value not in (None, "") else None
+    return DecisionRecord(
+        row_id=row_id,
+        row_timestamp=row_timestamp,
+        decision_timestamp=parse_datetime(timestamp_value),
+        agent=agent,
+        ticker=ticker,
+        action=action.strip() if action else None,
+        confidence=confidence.strip() if confidence else None,
+        rationale=rationale,
         raw_content=content,
     )

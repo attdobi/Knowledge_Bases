@@ -136,8 +136,24 @@ pytest -q
 --prune-orphan-attachments  Delete copied attachments no longer referenced by notes
 --reset-state               Delete the saved state before running
 --dry-run                   Parse and log rows without writing markdown or state
+--weekly-insights           Generate/update one weekly summary under Themes/YYYY-Www.md
+--week                      ISO week for weekly insights, e.g. 2026-W14
+--start-date/--end-date     Explicit inclusive date range for weekly insights
+--summaries-table           Strict SQL identifier for summaries table (default: summaries)
+--decisions-table           Optional strict SQL identifier for decisions table
+--skip-decisions-if-missing Compatibility flag; decisions are optional by default
 --log-level                 Python logging level (default: INFO)
 ```
+
+### Weekly financial insights
+
+Use weekly insights when you want one digestible financial summary instead of more daily/source-file churn:
+
+```bash
+financial-news-ingest --weekly-insights --week 2026-W14 --output-root /path/to/financial_news
+```
+
+The command reads DB summaries for the ISO week, discovers a decisions table when one is available, and idempotently replaces a generated section in `Themes/YYYY-Www.md`. If no decisions table exists, the weekly note still renders from summary headlines, insights, tickers, and heuristic themes.
 
 ## Graph metrics
 
@@ -183,9 +199,9 @@ Artifacts:
 - `edges.csv` — directed weighted edges across source→ticker, source→theme, and ticker↔theme links
 - `summary.json` — run metadata, counts, date range, and top-node summaries
 - `dashboard.md` — an operator-friendly leaderboard view for Obsidian / markdown review
-- `dashboard.html` — a self-contained browser dashboard with metric cards, bar charts, source coverage, Combined/Themes/Tickers graph views, a weekly evolution slider, and an SVG network overview
+- `dashboard.html` — a browser dashboard with metric cards, bar charts, source coverage, Combined/Themes/Tickers graph views, a weekly evolution slider, and a CDN-light D3 force network
 
-Metrics include unique neighbors / degree, in/out degree, weighted in/out degree, weighted degree, two-hop reach, and PageRank. The HTML dashboard can switch between the combined graph, source→theme view, and source→ticker view, then filter those views week by week with the slider.
+Metrics include unique neighbors / degree, in/out degree, weighted in/out degree, weighted degree, two-hop reach, and PageRank. The HTML dashboard can switch between the combined graph, source→theme view, and source→ticker view, then filter those views week by week with the slider. The network panel uses D3 from jsDelivr for drag, zoom/pan, weighted force layout, and node/edge tooltips while keeping all graph data embedded in the generated file.
 
 Open the HTML directly from disk, or serve the vault root and browse to `Organizer/graph-metrics/dashboard.html`:
 

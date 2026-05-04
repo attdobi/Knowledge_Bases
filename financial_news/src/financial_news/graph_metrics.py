@@ -1158,7 +1158,11 @@ def build_dashboard_html(
     th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     .table-wrap { overflow-x: auto; }
-    #network { width: 100%; min-height: 520px; border-radius: 14px; background: rgba(15,23,42,0.58); border: 1px solid var(--border); display: grid; place-items: center; }
+    #network { width: 100%; min-height: 520px; border-radius: 14px; background: rgba(15,23,42,0.58); border: 1px solid var(--border); display: grid; place-items: center; position: relative; overflow: hidden; touch-action: none; }
+    #network svg { display: block; }
+    .network-tooltip { position: absolute; pointer-events: none; z-index: 10; max-width: 280px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 12px; background: rgba(2,6,23,0.94); color: var(--text); box-shadow: 0 12px 34px rgba(0,0,0,0.35); opacity: 0; transform: translate3d(0,0,0); transition: opacity 120ms ease; }
+    .network-tooltip strong { color: #f8fafc; }
+    .network-tooltip .small { margin-top: 3px; }
     .network-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
     .type-source { color: var(--source); }
     .type-ticker { color: var(--ticker); }
@@ -1222,7 +1226,7 @@ def build_dashboard_html(
       <section>
         <h2>Network overview</h2>
         <div id=\"network\"></div>
-        <p class=\"network-note\">Filtered by graph view and week. Theme view shows source→theme edges; ticker view shows source→ticker edges; combined also includes ticker↔theme co-mentions.</p>
+        <p class=\"network-note\">Filtered by graph view and week. Drag nodes, scroll/trackpad zoom, pan the canvas, and hover nodes/edges for tooltips. Theme view shows source→theme edges; ticker view shows source→ticker edges; combined also includes ticker↔theme co-mentions.</p>
       </section>
       <section>
         <h2>Node mix</h2>
@@ -1261,6 +1265,7 @@ def build_dashboard_html(
   </div>
 
   <script id=\"graph-data\" type=\"application/json\">__GRAPH_DATA__</script>
+  <script src=\"https://cdn.jsdelivr.net/npm/d3@7\"></script>
   <script>
     (() => {
       const data = JSON.parse(document.getElementById('graph-data').textContent);
@@ -1596,85 +1601,149 @@ def build_dashboard_html(
           container.appendChild(emptyBlock('No network data for this view/week.'));
           return;
         }
-        const selectedIds = new Set(selected.map((node) => node.node_id));
+        if (!window.d3) {
+          container.appendChild(emptyBlock('D3 did not load. Serve this dashboard with network access or allow the jsDelivr d3@7 script.'));
+          return;
+        }
+
+        const selectedById = new Map(selected.map((node) => [node.node_id, { ...node }]));
+        const selectedIds = new Set(selectedById.keys());
         const graphEdges = filtered.edges
           .filter((edge) => selectedIds.has(edge.source_id) && selectedIds.has(edge.target_id))
           .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))
-          .slice(0, 160);
+          .slice(0, 160)
+          .map((edge) => ({
+            ...edge,
+            source: selectedById.get(edge.source_id),
+            target: selectedById.get(edge.target_id),
+          }));
+
         const width = 960;
         const height = 560;
-        const cx = width / 2;
-        const cy = height / 2;
-        const radius = Math.min(width, height) * 0.38;
         const maxDegree = Math.max(1, ...selected.map((node) => Number(node.weighted_degree_filtered || 0)));
         const maxWeight = Math.max(1, ...graphEdges.map((edge) => Number(edge.weight || 0)));
-        const positions = new Map();
-        selected.forEach((node, index) => {
-          const angle = -Math.PI / 2 + (index / Math.max(1, selected.length)) * Math.PI * 2;
-          const clusterOffset = ((Number(node.cluster_id || 0) % 5) - 2) * 16;
-          positions.set(node.node_id, {
-            x: cx + Math.cos(angle) * (radius + clusterOffset),
-            y: cy + Math.sin(angle) * (radius + clusterOffset),
+        const nodeRadius = (node) => 7 + Math.sqrt(Number(node.weighted_degree_filtered || 0) / maxDegree) * 17;
+        const tooltip = document.createElement('div');
+        tooltip.className = 'network-tooltip';
+        container.appendChild(tooltip);
+
+        const showTooltip = (event, html) => {
+          tooltip.innerHTML = html;
+          const rect = container.getBoundingClientRect();
+          tooltip.style.left = `${Math.min(rect.width - 18, event.clientX - rect.left + 14)}px`;
+          tooltip.style.top = `${Math.max(8, event.clientY - rect.top + 14)}px`;
+          tooltip.style.opacity = '1';
+        };
+        const hideTooltip = () => { tooltip.style.opacity = '0'; };
+        const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+        const svg = d3.select(container)
+          .append('svg')
+          .attr('viewBox', [0, 0, width, height])
+          .attr('role', 'img')
+          .attr('aria-label', 'Interactive force-directed financial news graph')
+          .style('width', '100%')
+          .style('height', '520px')
+          .style('cursor', 'grab');
+
+        const defs = svg.append('defs');
+        defs.append('marker')
+          .attr('id', 'arrow')
+          .attr('viewBox', '0 -5 10 10')
+          .attr('refX', 18)
+          .attr('refY', 0)
+          .attr('markerWidth', 6)
+          .attr('markerHeight', 6)
+          .attr('orient', 'auto')
+          .append('path')
+          .attr('d', 'M0,-5L10,0L0,5')
+          .attr('fill', '#64748b')
+          .attr('opacity', 0.55);
+
+        const root = svg.append('g');
+        svg.call(
+          d3.zoom()
+            .scaleExtent([0.35, 4])
+            .on('start', () => svg.style('cursor', 'grabbing'))
+            .on('zoom', (event) => root.attr('transform', event.transform))
+            .on('end', () => svg.style('cursor', 'grab'))
+        );
+
+        const link = root.append('g')
+          .attr('stroke', '#64748b')
+          .attr('stroke-opacity', 0.38)
+          .selectAll('line')
+          .data(graphEdges)
+          .join('line')
+          .attr('stroke-width', (edge) => 0.8 + Number(edge.weight || 0) / maxWeight * 4.2)
+          .attr('marker-end', 'url(#arrow)')
+          .on('mousemove', (event, edge) => showTooltip(event, `<strong>${esc(edge.source_label || edge.source_id)} → ${esc(edge.target_label || edge.target_id)}</strong><div class="small">Weight: ${esc(edge.weight)}</div><div class="small">${esc(edge.source_type)} → ${esc(edge.target_type)}</div>`))
+          .on('mouseleave', hideTooltip);
+
+        const node = root.append('g')
+          .selectAll('g')
+          .data(Array.from(selectedById.values()))
+          .join('g')
+          .attr('class', 'force-node')
+          .style('cursor', 'grab');
+
+        node.append('circle')
+          .attr('r', nodeRadius)
+          .attr('fill', (node) => typeColors[node.node_type] || '#94a3b8')
+          .attr('fill-opacity', 0.88)
+          .attr('stroke', '#e2e8f0')
+          .attr('stroke-opacity', 0.72)
+          .attr('stroke-width', 1.2)
+          .on('mousemove', (event, node) => showTooltip(event, `<strong>${esc(node.label)}</strong><div class="small">${esc(node.node_type)} · cluster ${esc(node.cluster_id)}</div><div class="small">Visible degree: ${esc(node.weighted_degree_filtered)} · Period blocks: ${esc(node.visible_block_count)}</div><div class="small">PageRank: ${Number(node.pagerank || 0).toFixed(6)}</div>`))
+          .on('mouseleave', hideTooltip)
+          .on('dblclick', (event, node) => {
+            const href = nodeHref(node);
+            if (href) window.open(href, '_blank', 'noopener');
           });
-        });
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-        svg.setAttribute('role', 'img');
-        svg.setAttribute('aria-label', 'Financial news graph network visualization');
-        svg.style.width = '100%';
-        svg.style.height = '520px';
 
-        for (const edge of graphEdges) {
-          const source = positions.get(edge.source_id);
-          const target = positions.get(edge.target_id);
-          if (!source || !target) continue;
-          const line = document.createElementNS(svg.namespaceURI, 'line');
-          line.setAttribute('x1', source.x);
-          line.setAttribute('y1', source.y);
-          line.setAttribute('x2', target.x);
-          line.setAttribute('y2', target.y);
-          line.setAttribute('stroke', '#64748b');
-          line.setAttribute('stroke-opacity', '0.34');
-          line.setAttribute('stroke-width', String(0.8 + Number(edge.weight || 0) / maxWeight * 4.2));
-          const title = document.createElementNS(svg.namespaceURI, 'title');
-          title.textContent = `${edge.source_id} → ${edge.target_id}: ${edge.weight}`;
-          line.appendChild(title);
-          svg.appendChild(line);
-        }
+        node.append('text')
+          .attr('x', (node) => nodeRadius(node) + 4)
+          .attr('y', 4)
+          .attr('fill', '#e5e7eb')
+          .attr('font-size', 11)
+          .attr('paint-order', 'stroke')
+          .attr('stroke', '#0f172a')
+          .attr('stroke-width', 3)
+          .text((node) => (nodeRadius(node) >= 12 || selected.length <= 34) ? (node.label.length > 18 ? `${node.label.slice(0, 17)}…` : node.label) : '');
 
-        for (const node of selected) {
-          const pos = positions.get(node.node_id);
-          if (!pos) continue;
-          const group = document.createElementNS(svg.namespaceURI, 'g');
-          const circle = document.createElementNS(svg.namespaceURI, 'circle');
-          const size = 7 + Math.sqrt(Number(node.weighted_degree_filtered || 0) / maxDegree) * 17;
-          circle.setAttribute('cx', pos.x);
-          circle.setAttribute('cy', pos.y);
-          circle.setAttribute('r', String(size));
-          circle.setAttribute('fill', typeColors[node.node_type] || '#94a3b8');
-          circle.setAttribute('fill-opacity', '0.86');
-          circle.setAttribute('stroke', '#e2e8f0');
-          circle.setAttribute('stroke-opacity', '0.72');
-          circle.setAttribute('stroke-width', '1.2');
-          const title = document.createElementNS(svg.namespaceURI, 'title');
-          title.textContent = `${node.node_id}\nvisible degree: ${node.weighted_degree_filtered}\nperiod blocks: ${node.visible_block_count}\nPageRank: ${Number(node.pagerank || 0).toFixed(6)}\ncluster: ${node.cluster_id}`;
-          circle.appendChild(title);
-          group.appendChild(circle);
-          if (size >= 12 || selected.length <= 34) {
-            const label = document.createElementNS(svg.namespaceURI, 'text');
-            label.setAttribute('x', pos.x + size + 4);
-            label.setAttribute('y', pos.y + 4);
-            label.setAttribute('fill', '#e5e7eb');
-            label.setAttribute('font-size', '11');
-            label.setAttribute('paint-order', 'stroke');
-            label.setAttribute('stroke', '#0f172a');
-            label.setAttribute('stroke-width', '3');
-            label.textContent = node.label.length > 18 ? `${node.label.slice(0, 17)}…` : node.label;
-            group.appendChild(label);
-          }
-          svg.appendChild(group);
-        }
-        container.appendChild(svg);
+        const simulation = d3.forceSimulation(Array.from(selectedById.values()))
+          .force('link', d3.forceLink(graphEdges).id((node) => node.node_id).distance((edge) => 56 + Math.max(0, 12 - Number(edge.weight || 0)) * 5).strength(0.34))
+          .force('charge', d3.forceManyBody().strength(-260))
+          .force('center', d3.forceCenter(width / 2, height / 2))
+          .force('collision', d3.forceCollide().radius((node) => nodeRadius(node) + 6))
+          .on('tick', () => {
+            link
+              .attr('x1', (edge) => edge.source.x)
+              .attr('y1', (edge) => edge.source.y)
+              .attr('x2', (edge) => edge.target.x)
+              .attr('y2', (edge) => edge.target.y);
+            node.attr('transform', (node) => `translate(${node.x},${node.y})`);
+          });
+
+        node.call(
+          d3.drag()
+            .on('start', (event, node) => {
+              if (!event.active) simulation.alphaTarget(0.25).restart();
+              node.fx = node.x;
+              node.fy = node.y;
+              d3.select(event.sourceEvent?.target?.closest?.('g.force-node') || event.sourceEvent?.target).style('cursor', 'grabbing');
+            })
+            .on('drag', (event, node) => {
+              node.fx = event.x;
+              node.fy = event.y;
+            })
+            .on('end', (event, node) => {
+              if (!event.active) simulation.alphaTarget(0);
+              node.fx = null;
+              node.fy = null;
+              d3.select(event.sourceEvent?.target?.closest?.('g.force-node') || event.sourceEvent?.target).style('cursor', 'grab');
+            })
+        );
       }
 
       function updateCards(filtered) {

@@ -38,6 +38,7 @@ Sources/*.md
 !Sources/Fox Business.md
 !Sources/Home.md
 !Sources/Yahoo Finance.md
+sources/**
 
 # Generated theme pages; preserve curated home/seed pages already tracked
 Themes/*.md

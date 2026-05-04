@@ -164,6 +164,12 @@ def test_build_graph_artifacts_generates_self_contained_html_dashboard(tmp_path:
     assert "id=\"week-slider\"" in html_dashboard
     assert "id=\"week-label\"" in html_dashboard
     assert "Use the slider to inspect evolution week by week" in html_dashboard
+    assert "https://cdn.jsdelivr.net/npm/d3@7" in html_dashboard
+    assert "d3.forceSimulation" in html_dashboard
+    assert "d3.zoom" in html_dashboard
+    assert "d3.drag" in html_dashboard
+    assert "network-tooltip" in html_dashboard
+    assert "Drag nodes, scroll/trackpad zoom" in html_dashboard
 
     graph_data = html_dashboard.split(
         "<script id=\"graph-data\" type=\"application/json\">", 1
@@ -181,6 +187,26 @@ def test_build_graph_artifacts_generates_self_contained_html_dashboard(tmp_path:
     assert payload["top_n"] == 10
     assert {node["node_id"] for node in payload["nodes"]} >= {"source:CNBC", "ticker:NVDA", "theme:AI"}
     assert {edge["source_id"] for edge in payload["edges"]} >= {"source:CNBC", "theme:AI"}
+
+
+def test_gitignore_ignores_generated_lowercase_sources_but_keeps_curated_profiles() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    root_gitignore = (repo_root / ".gitignore").read_text(encoding="utf-8")
+    vault_gitignore = (repo_root / "financial_news" / ".gitignore").read_text(encoding="utf-8")
+
+    assert "financial_news/sources/**" in root_gitignore
+    assert "sources/**" in vault_gitignore
+    assert "Sources/*.md" in vault_gitignore
+    for curated_source in [
+        "AP Business",
+        "BBC Business",
+        "Benzinga",
+        "CNBC",
+        "Fox Business",
+        "Home",
+        "Yahoo Finance",
+    ]:
+        assert f"!Sources/{curated_source}.md" in vault_gitignore
 
 
 def test_main_writes_graph_metric_outputs_and_dashboard(tmp_path: Path) -> None:
@@ -245,6 +271,8 @@ def test_main_writes_graph_metric_outputs_and_dashboard(tmp_path: Path) -> None:
     assert "Graph Metrics Dashboard" in dashboard_html
     assert "Network overview" in dashboard_html
     assert "<script id=\"graph-data\" type=\"application/json\">" in dashboard_html
+    assert "https://cdn.jsdelivr.net/npm/d3@7" in dashboard_html
+    assert "d3.forceLink" in dashboard_html
     assert "source:CNBC" in dashboard_html
     assert "ticker:NVDA" in dashboard_html
     assert "summary.json" in dashboard_html

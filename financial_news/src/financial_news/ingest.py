@@ -3,15 +3,53 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Sequence
 
 from financial_news.config import AppConfig, parse_path_remap
-from financial_news.db import connect, discover_schema, fetch_summaries
-from financial_news.obsidian import append_summary, prune_orphan_attachments
+from financial_news.db import (
+    connect,
+    discover_decision_schema,
+    discover_schema,
+    fetch_decisions_between,
+    fetch_summaries,
+    fetch_summaries_between,
+    validate_identifier,
+)
+from financial_news.obsidian import append_summary, prune_orphan_attachments, upsert_weekly_insights
 from financial_news.state import StateStore
 
 LOGGER = logging.getLogger(__name__)
+WEEK_RE = re.compile(r"^(?P<year>\d{4})-W(?P<week>\d{2})$")
+
+
+def parse_week_key(value: str) -> tuple[str, date, date]:
+    match = WEEK_RE.fullmatch(value.strip())
+    if not match:
+        raise ValueError(f"Invalid ISO week {value!r}; expected YYYY-Www, e.g. 2026-W14")
+    year = int(match.group("year"))
+    week = int(match.group("week"))
+    try:
+        start = date.fromisocalendar(year, week, 1)
+    except ValueError as exc:
+        raise ValueError(f"Invalid ISO week {value!r}: {exc}") from exc
+    end = start + timedelta(days=7)
+    return f"{year}-W{week:02d}", start, end
+
+
+def parse_date_range(start_date: str, end_date: str) -> tuple[str, date, date]:
+    start = date.fromisoformat(start_date)
+    inclusive_end = date.fromisoformat(end_date)
+    if inclusive_end < start:
+        raise ValueError("--end-date must be on or after --start-date")
+    iso_year, iso_week, _ = start.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}", start, inclusive_end + timedelta(days=1)
+
+
+def date_to_utc_datetime(value: date) -> datetime:
+    return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
 def parse_path_remaps(values: Sequence[str] | None) -> list[tuple[Path, Path]]:
@@ -63,6 +101,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--reset-state", action="store_true", help="Delete the stored state before ingesting.")
     parser.add_argument("--dry-run", action="store_true", help="Parse and log rows without writing files or state.")
+    parser.add_argument(
+        "--weekly-insights",
+        action="store_true",
+        help="Generate/update one weekly financial summary in Themes/YYYY-Www.md from DB summaries and decisions if available.",
+    )
+    parser.add_argument("--week", help="ISO week to summarize for --weekly-insights, e.g. 2026-W14. Defaults to the current UTC week.")
+    parser.add_argument("--start-date", help="Inclusive YYYY-MM-DD start date for --weekly-insights. Use with --end-date.")
+    parser.add_argument("--end-date", help="Inclusive YYYY-MM-DD end date for --weekly-insights. Use with --start-date.")
+    parser.add_argument("--summaries-table", default="summaries", help="Summaries table name (strict SQL identifier, default: summaries).")
+    parser.add_argument("--decisions-table", help="Optional decisions table name (strict SQL identifier). If omitted, common names are discovered.")
+    parser.add_argument(
+        "--skip-decisions-if-missing",
+        action="store_true",
+        help="Compatibility flag: decision data is optional by default and skipped when no decision table is found.",
+    )
     parser.add_argument("--log-level", default="INFO", help="Python logging level (default: INFO).")
     return parser
 
@@ -94,6 +147,60 @@ def main(argv: Sequence[str] | None = None) -> int:
         attachment_quality=args.attachment_quality,
         attachment_max_dimension=args.attachment_max_dimension,
     )
+    if args.weekly_insights:
+        if bool(args.start_date) != bool(args.end_date):
+            parser.error("--start-date and --end-date must be supplied together")
+        try:
+            if args.start_date and args.end_date:
+                week_key, start_day, end_day_exclusive = parse_date_range(args.start_date, args.end_date)
+            else:
+                if args.week:
+                    week_key, start_day, end_day_exclusive = parse_week_key(args.week)
+                else:
+                    today = datetime.now(timezone.utc).date()
+                    iso_year, iso_week, _ = today.isocalendar()
+                    week_key, start_day, end_day_exclusive = parse_week_key(f"{iso_year}-W{iso_week:02d}")
+            summaries_table = validate_identifier(args.summaries_table, label="summaries table name")
+            decisions_table = validate_identifier(args.decisions_table, label="decisions table name") if args.decisions_table else None
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        start_dt = date_to_utc_datetime(start_day)
+        end_dt = date_to_utc_datetime(end_day_exclusive)
+        with connect(config.dsn) as conn:
+            summary_schema = discover_schema(conn, summaries_table)
+            summaries = fetch_summaries_between(conn, summary_schema, start=start_dt, end=end_dt)
+            decision_schema = discover_decision_schema(conn, decisions_table)
+            decisions = (
+                fetch_decisions_between(conn, decision_schema, start=start_dt, end=end_dt)
+                if decision_schema is not None
+                else []
+            )
+        if args.dry_run:
+            LOGGER.info(
+                "Dry run weekly insights week=%s summaries=%s decisions=%s output_root=%s",
+                week_key,
+                len(summaries),
+                len(decisions),
+                config.output_root,
+            )
+            return 0
+        output_path = upsert_weekly_insights(
+            config.output_root,
+            week_key=week_key,
+            start_date=start_day.isoformat(),
+            end_date=(end_day_exclusive - timedelta(days=1)).isoformat(),
+            summaries=summaries,
+            decisions=decisions,
+        )
+        LOGGER.info(
+            "Updated weekly insights at %s from %s summaries and %s decisions",
+            output_path,
+            len(summaries),
+            len(decisions),
+        )
+        return 0
+
     state_store = StateStore(config.state_path)
 
     if args.reset_state:

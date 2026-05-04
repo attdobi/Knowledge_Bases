@@ -5,13 +5,14 @@ import logging
 import os
 import re
 import shutil
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from financial_news.config import AttachmentConfig, PathRemap
-from financial_news.models import SummaryRecord
+from financial_news.models import DecisionRecord, SummaryRecord
 from financial_news.topics import topic_links_for_record, topic_slug
 
 LOGGER = logging.getLogger(__name__)
@@ -401,6 +402,160 @@ def append_summary(
         handle.write(block)
     update_indexes(output_root, record, destination)
     return destination
+
+
+WEEKLY_INSIGHTS_START = "<!-- financial-news-weekly-insights:start -->"
+WEEKLY_INSIGHTS_END = "<!-- financial-news-weekly-insights:end -->"
+
+
+def week_note_path(output_root: Path, week_key: str) -> Path:
+    return output_root / "Themes" / f"{week_key}.md"
+
+
+def _display_date(value: datetime | None) -> str:
+    return value.strftime("%Y-%m-%d") if value else "undated"
+
+
+def _top_items(counter: Counter[str], limit: int = 6) -> list[tuple[str, int]]:
+    return sorted(counter.items(), key=lambda item: (-item[1], item[0].casefold(), item[0]))[:limit]
+
+
+def _first_sentence(values: list[str], fallback: str = "No extracted detail") -> str:
+    for value in values:
+        text = re.sub(r"\s+", " ", value).strip()
+        if text:
+            return text
+    return fallback
+
+
+def build_weekly_insights_section(
+    *,
+    week_key: str,
+    start_date: str,
+    end_date: str,
+    summaries: list[SummaryRecord],
+    decisions: list[DecisionRecord] | None = None,
+    generated_at: datetime | None = None,
+) -> str:
+    decisions = decisions or []
+    generated_at = generated_at or datetime.now(timezone.utc)
+    source_counts: Counter[str] = Counter(record.agent or "Unknown Source" for record in summaries)
+    ticker_counts: Counter[str] = Counter(ticker for record in summaries for ticker in record.tickers)
+    topic_counts: Counter[str] = Counter(topic for record in summaries for topic in record.categories)
+    decision_action_counts: Counter[str] = Counter(decision.action or "Unspecified" for decision in decisions)
+
+    lines = [
+        WEEKLY_INSIGHTS_START,
+        f"> Generated {generated_at.isoformat()} from `{len(summaries)}` summary rows and `{len(decisions)}` decision rows for `{week_key}` ({start_date} → {end_date}).",
+        "",
+        "### Executive takeaways",
+    ]
+    if summaries:
+        top_topics = ", ".join(f"{name} ({count})" for name, count in _top_items(topic_counts, 4)) or "no durable topic concentration"
+        top_tickers = ", ".join(f"`{name}` ({count})" for name, count in _top_items(ticker_counts, 5)) or "no extracted tickers"
+        top_sources = ", ".join(f"{name} ({count})" for name, count in _top_items(source_counts, 4))
+        lines.extend(
+            [
+                f"- **Theme concentration:** {top_topics}.",
+                f"- **Ticker focus:** {top_tickers}.",
+                f"- **Source coverage:** {top_sources}.",
+            ]
+        )
+    else:
+        lines.append("- No summaries were available from the database for this week.")
+
+    if decisions:
+        actions = ", ".join(f"{name} ({count})" for name, count in _top_items(decision_action_counts, 4))
+        decision_tickers = ", ".join(
+            f"`{name}` ({count})" for name, count in _top_items(Counter(d.ticker for d in decisions if d.ticker), 5)
+        ) or "no ticker-specific decisions"
+        lines.append(f"- **Decision context:** {actions}; ticker exposure: {decision_tickers}.")
+    else:
+        lines.append("- **Decision context:** no decision rows were available for this week.")
+
+    lines.extend(["", "### Key themes"])
+    if topic_counts:
+        for topic, count in _top_items(topic_counts, 8):
+            lines.append(f"- [[Topics/{topic}|{topic}]] — {count} mentions")
+    else:
+        lines.append("- _No heuristic themes extracted._")
+
+    lines.extend(["", "### Most-mentioned tickers"])
+    if ticker_counts:
+        lines.append("- " + ", ".join(f"`{ticker}` ({count})" for ticker, count in _top_items(ticker_counts, 12)))
+    else:
+        lines.append("- _No tickers extracted._")
+
+    lines.extend(["", "### Summary highlights"])
+    if summaries:
+        for record in sorted(summaries, key=lambda item: ((item.effective_timestamp.isoformat() if item.effective_timestamp else ""), item.row_id))[:12]:
+            headline = _first_sentence(record.headlines, fallback="No headline extracted")
+            insight = _first_sentence(record.insights, fallback="No insight extracted")
+            day = _display_date(record.effective_timestamp)
+            source = source_profile_link(record.agent)
+            source_text = f"[[{source[0]}|{source[1]}]]" if source else (record.agent or "Unknown Source")
+            lines.append(f"- **{day}** — {source_text}: {headline} — {insight}")
+    else:
+        lines.append("- _No summary rows available._")
+
+    lines.extend(["", "### Decisions"])
+    if decisions:
+        for decision in sorted(decisions, key=lambda item: ((item.effective_timestamp.isoformat() if item.effective_timestamp else ""), item.row_id))[:12]:
+            day = _display_date(decision.effective_timestamp)
+            ticker = f"`{decision.ticker}` " if decision.ticker else ""
+            action = decision.action or "decision"
+            confidence = f" · confidence: {decision.confidence}" if decision.confidence else ""
+            rationale = _first_sentence(decision.rationale, fallback="No rationale extracted")
+            lines.append(f"- **{day}** — {ticker}{action}{confidence}: {rationale}")
+    else:
+        lines.append("- _No decision rows available._")
+
+    lines.append(WEEKLY_INSIGHTS_END)
+    return "\n".join(lines) + "\n"
+
+
+def upsert_weekly_insights(
+    output_root: Path,
+    *,
+    week_key: str,
+    start_date: str,
+    end_date: str,
+    summaries: list[SummaryRecord],
+    decisions: list[DecisionRecord] | None = None,
+) -> Path:
+    path = week_note_path(output_root, week_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    section = build_weekly_insights_section(
+        week_key=week_key,
+        start_date=start_date,
+        end_date=end_date,
+        summaries=summaries,
+        decisions=decisions or [],
+    )
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+    else:
+        content = (
+            "---\n"
+            "tags:\n"
+            "  - financial-news\n"
+            "  - weekly-summary\n"
+            f"  - week/{week_key}\n"
+            "generated-by: financial-news-ingest\n"
+            "curation: generated\n"
+            "---\n\n"
+            f"# Financial News Weekly Summary — {week_key}\n\n"
+        )
+    if WEEKLY_INSIGHTS_START in content and WEEKLY_INSIGHTS_END in content:
+        start = content.index(WEEKLY_INSIGHTS_START)
+        end = content.index(WEEKLY_INSIGHTS_END, start) + len(WEEKLY_INSIGHTS_END)
+        content = content[:start] + section.rstrip() + content[end:]
+        if not content.endswith("\n"):
+            content += "\n"
+    else:
+        content = content.rstrip() + "\n\n" + section
+    path.write_text(content, encoding="utf-8")
+    return path
 
 
 def _normalize_attachment_reference(reference: str) -> str | None:
